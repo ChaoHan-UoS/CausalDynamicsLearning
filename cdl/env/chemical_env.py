@@ -22,7 +22,7 @@ import random
 
 
 graphs = {
-    'chain3': '0->1->2',
+    'chain3': '0->1->2->0',
     'fork3': '0->{1-2}',
     'collider3': '{0-1}->2',
     'collider4': '{0-2}->3',
@@ -224,9 +224,10 @@ def parse_skeleton(graph, M=None):
                     raise ValueError("Edges are not allowed from " +
                                      str(prevlink) + " to oneself!")
                 elif nextlink < prevlink:
-                    raise ValueError("Edges are not allowed from " +
-                                     str(prevlink) + " to ancestor " +
-                                     str(nextlink) + " !")
+                    # raise ValueError("Edges are not allowed from " +
+                    #                  str(prevlink) + " to ancestor " +
+                    #                  str(nextlink) + " !")
+                    gamma[nextlink, prevlink] = 1
                 else:
                     gamma[nextlink, prevlink] = 1
     
@@ -237,14 +238,14 @@ def parse_skeleton(graph, M=None):
 mpl.use('Agg')
 
 
-def random_dag(M, N, g=None):
+def random_dag(M, N, rng, g=None):
     """Generate a random Directed Acyclic Graph (DAG) with a given number of nodes and edges."""
     if g is None:
         expParents = 5
         idx        = np.arange(M).astype(np.float32)[:, np.newaxis]
         idx_maxed  = np.minimum(idx * 0.5, expParents)
         p          = np.broadcast_to(idx_maxed / (idx + 1), (M, M))
-        B          = np.random.binomial(1, p)
+        B          = rng.binomial(1, p)
         B          = np.tril(B, -1)
         return B
     else:
@@ -253,28 +254,23 @@ def random_dag(M, N, g=None):
 
 
 class MLP(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, num_objs, num_colors):
         super().__init__()
-        self.layers = []
-        for i in range(1, len(dims)):
-            self.layers.append(nn.Linear(dims[i-1], dims[i]))
-            torch.nn.init.orthogonal_(self.layers[-1].weight.data, 3.0)
-            torch.nn.init.uniform_(self.layers[-1].bias.data, -0.2, +0.2)
-        self.layers = nn.ModuleList(self.layers)
+        self.num_objs = num_objs
+        self.num_colors = num_colors
 
-    def forward(self, x, mask):
+    def forward(self, x, r, v):
+        colorid_v = x[0, v * self.num_colors: (v + 1) * self.num_colors].argmax()
+        colorid_r = x[0, r * self.num_colors: (r + 1) * self.num_colors].argmax()
 
-        x = x * mask
+        # state transition of a variable when the action node of its parent variable is intervened
+        colorid_v = (colorid_v + colorid_r) % self.num_colors
+        # colorid_v = colorid_v % self.num_colors
 
-        for i, l in enumerate(self.layers):
-            if i == len(self.layers) - 1:
-                x = torch.softmax(l(x), dim=1)
-            else:
-                x = torch.relu(l(x))
+        color_v = torch.zeros(self.num_colors)
+        color_v[colorid_v] = 1
 
-        x = torch.distributions.one_hot_categorical.OneHotCategorical(probs=x).sample()
-
-        return x
+        return color_v
 
 
 @dataclass
@@ -323,39 +319,27 @@ class Chemical(gym.Env):
         self.num_colors = chemical_env_params.num_colors
         if self.num_colors is None:
             self.num_colors = self.num_objects
-        self.num_actions = self.num_objects * self.num_colors
+        self.num_actions = self.num_objects
         self.num_target_interventions = chemical_env_params.num_target_interventions
         self.max_steps = chemical_env_params.max_steps
 
-        self.mlps = []
         self.mask = None
 
         self.colors, _ = get_colors_and_weights(cmap='Set1', num_colors=self.num_colors)
         self.object_to_color = [torch.zeros(self.num_colors, device=device) for _ in range(self.num_objects)]
 
         self.np_random = None
+        self.seed(params.seed)
 
         self.match_type = chemical_env_params.match_type
         self.dense_reward = chemical_env_params.dense_reward
         if self.match_type == "all":
             self.match_type = list(range(self.num_objects))
 
-        # Initialize to pos outside of env for easier collision resolution.
-        self.objects = OrderedDict()
+        # All objects have the same MLP structure and paramters but with different inputs.
+        self.mlps = [MLP(self.num_objects, self.num_colors).to(device) for _ in range(self.num_objects)]
 
-        self.adjacency_matrix = None
-
-        mlp_dims = [self.num_objects * self.num_colors, 4 * self.num_objects, self.num_colors]
-        self.mlps = [MLP(mlp_dims).to(device) for _ in range(self.num_objects)]
-
-        num_nodes = self.num_objects
-        num_edges = 0 if num_nodes == 1 else np.random.randint(num_nodes - 1, num_nodes * (num_nodes - 1) // 2 + 1)
-
-        self.adjacency_matrix = random_dag(num_nodes, num_edges, chemical_env_params.g)
-        self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(device).float()
-
-        # Generate masks so that each variable only receives input from its parents.
-        self.generate_masks()
+        self.set_graph(chemical_env_params.g)
 
         # If True, then check for collisions and don't allow two
         #   objects to occupy the same position.
@@ -366,7 +350,6 @@ class Chemical(gym.Env):
 
         self.action_dim = self.num_actions
 
-        self.seed(params.seed)
         self.reset()
 
     def seed(self, seed=None):
@@ -385,10 +368,10 @@ class Chemical(gym.Env):
             print('INFO: Loading predefined graph for configuration '+str(g))
             g = graphs[g]
         num_nodes = self.num_objects
-        num_edges = np.random.randint(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
-        self.adjacency_matrix = random_dag(num_nodes, num_edges, g=g)
+        num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
+        self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
-        # print(self.adjacency_matrix)
+        print(self.adjacency_matrix)
         self.generate_masks()
         self.reset()
 
@@ -514,6 +497,7 @@ class Chemical(gym.Env):
         return state
 
     def generate_masks(self):
+        """Generate masks so that each variable only receives input from its parents"""
         mask = self.adjacency_matrix.unsqueeze(-1)
         mask = mask.repeat(1, 1, self.num_colors)
         self.mask = mask.view(self.adjacency_matrix.size(0), -1)
@@ -521,12 +505,20 @@ class Chemical(gym.Env):
     def generate_target(self, num_steps=10):
         self.actions_to_target = []
         for i in range(num_steps):
-            intervention_id = random.randint(0, self.num_objects - 1)
-            to_color = random.randint(0, self.num_colors - 1)
-            self.actions_to_target.append(intervention_id * self.num_colors + to_color)
-            self.object_to_color_target[intervention_id] = torch.zeros(self.num_colors, device=self.device)
-            self.object_to_color_target[intervention_id][to_color] = 1
+            intervention_id = self.np_random.integers(0, self.num_objects - 1)
+            self.actions_to_target.append(intervention_id)
             self.sample_variables_target(intervention_id)
+
+        matches = 0.
+        for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
+            if i not in self.match_type:
+                continue
+            if (c1 == c2).all():
+                matches += 1
+
+        num_needed_match = len(self.match_type)
+        if self.dense_reward:
+            self.reward_baseline  = matches / num_needed_match
 
     def reset(self, num_steps=10):
         self.cur_step = 0
@@ -535,12 +527,11 @@ class Chemical(gym.Env):
         self.object_to_color_target = [torch.zeros(self.num_colors, device=self.device)
                                        for _ in range(self.num_objects)]
 
-        # Sample color for root node randomly
-        root_color = np.random.randint(0, self.num_colors)
-        self.object_to_color[0][root_color] = 1
+        # Sample color for all nodes randomly
+        for i in range(self.num_objects):
+            random_color = self.np_random.integers(0, self.num_colors)
+            self.object_to_color[i][random_color] = 1
 
-        # Sample color for other nodes using MLPs
-        self.sample_variables(0, do_everything=True)
         if self.movement == 'Dynamic':
             self.objects = OrderedDict()
             # Randomize object position.
@@ -557,9 +548,9 @@ class Chemical(gym.Env):
                         # width_unit = 128 // self.num_objects
                         # low = width_unit * idx // self.grid_size
                         # high = (width_unit * (idx + 1) - self.shape_size) // self.grid_size + 1
-                        # x = np.random.randint(low, high)
-                        x = np.random.randint(self.width)
-                        y = np.random.randint(self.height)
+                        # x = self.np_random.integers(low, high)
+                        x = self.np_random.integers(self.width)
+                        y = self.np_random.integers(self.height)
                         self.objects[idx] = Object(
                             pos=Coord(x=x, y=y),
                             color=to_numpy(self.object_to_color[idx].argmax()))
@@ -574,7 +565,9 @@ class Chemical(gym.Env):
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
 
         state = self.get_state()
-        return state
+        info={}
+
+        return state, info
 
     def valid_pos(self, pos, obj_id):
         """Check if position is valid."""
@@ -605,14 +598,12 @@ class Chemical(gym.Env):
         idx: variable at which intervention is performed
         """
         reached = [idx]
-        for v in range(idx + 1, self.num_objects):
+        for v in range(self.num_objects):
             if do_everything or self.is_reachable(v, reached):
-                reached.append(v)
-
                 inp = torch.cat(self.object_to_color, dim=0).unsqueeze(0)
                 mask = self.mask[v].unsqueeze(0)
 
-                out = self.mlps[v](inp, mask)
+                out = self.mlps[v](inp, reached[0], v)
                 self.object_to_color[v] = out.squeeze(0)
 
     def sample_variables_target(self, idx, do_everything=False):
@@ -620,45 +611,33 @@ class Chemical(gym.Env):
         idx: variable at which intervention is performed
         """
         reached = [idx]
-        for v in range(idx + 1, self.num_objects):
+        for v in range(self.num_objects):
             if do_everything or self.is_reachable(v, reached):
-                reached.append(v)
-
                 inp = torch.cat(self.object_to_color_target, dim=0).unsqueeze(0)
                 mask = self.mask[v].unsqueeze(0)
 
-                out = self.mlps[v](inp, mask)
+                out = self.mlps[v](inp, reached[0], v)
                 self.object_to_color_target[v] = out.squeeze(0)
 
-    def translate(self, obj_id, color_id):
-        """Translate object pixel.
-
-        Args:
-            obj_id: ID of object.
-            color_id: ID of color.
-        """
-        color_ = torch.zeros(self.num_colors, device=self.device)
-        color_[color_id] = 1
-        self.object_to_color[obj_id] = color_
+    def translate(self, obj_id):
         self.sample_variables(obj_id)
         for idx, obj in self.objects.items():
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
     def step(self, action: int):
-        obj_id = action // self.num_colors
-        color_id = action % self.num_colors
-        self.translate(obj_id, color_id)
+        obj_id = action
+        self.translate(obj_id)
 
         if self.continuous_pos:
             for _, obj in self.objects.items():
                 obj.x = np.random.normal(0, self.width_std)
                 obj.y = np.random.normal(0, self.height_std)
         else:
-            idx = np.random.randint(self.num_objects)
+            idx = self.np_random.integers(self.num_objects)
             obj = self.objects[idx]
             while True:
-                new_x = np.random.randint(self.width)
-                new_y = np.random.randint(self.height)
+                new_x = self.np_random.integers(self.width)
+                new_y = self.np_random.integers(self.height)
                 new_pos = Coord(x=new_x, y=new_y)
                 if self.valid_pos(new_pos, idx):
                     obj.pos = new_pos
@@ -673,14 +652,16 @@ class Chemical(gym.Env):
 
         num_needed_match = len(self.match_type)
         if self.dense_reward:
-            reward = matches / num_needed_match
+            reward = matches / num_needed_match - self.reward_baseline
+            self.reward_baseline = matches / num_needed_match
         else:
             reward = float(matches == num_needed_match)
         info = {"success": matches == num_needed_match}
 
         self.cur_step += 1
 
-        done = self.cur_step >= self.max_steps
-
         state = self.get_state()
-        return state, reward, done, info
+        terminated = False
+        truncated = self.cur_step >= self.max_steps
+
+        return state, reward, terminated, truncated, info
