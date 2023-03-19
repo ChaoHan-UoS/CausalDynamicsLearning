@@ -1,4 +1,6 @@
 import os
+import sys
+
 import numpy as np
 
 import torch
@@ -153,7 +155,9 @@ class Inference(nn.Module):
             notice that bs can be a multi-dimensional batch size
         :param value:
             if state space is continuous: (bs, feature_dim).
-            else: [(bs, feature_i_dim)]  * feature_dim
+            else: [(bs, feature_i_dim)]
+            # feature_i_dim is expected to be an one-hot value (Expected value argument of .log_prob(value) to be within
+            # the support (OneHot()) of the distribution OneHotCategorical())
         :return: (bs, feature_dim)
         """
         if self.continuous_state:
@@ -230,8 +234,8 @@ class Inference(nn.Module):
         :param pred_dist: next step value for all state variables in the format of distribution,
             if state space is continuous:
                 a Normal distribution of shape (bs, n_pred_step, feature_dim)
-            else: 
-                a list of distributions, [OneHotCategorical / Normal] * feature_dim, 
+            else:
+                a list of distributions, [OneHotCategorical / Normal] * feature_dim,
                 each of shape (bs, n_pred_step, feature_i_dim)
         :param next_feature:
             if use a CNN encoder:
@@ -273,9 +277,16 @@ class Inference(nn.Module):
 
     def update(self, obses, actions, next_obses, eval=False):
         """
+        Old:
         :param obs: {obs_i_key: (bs, num_observation_steps, obs_i_shape)}
         :param actions: (bs, num_pred_steps, action_dim)
-        :param next_obses: ({obs_i_key: (bs, num_pred_steps, obs_i_shape)}
+        :param next_obses: {obs_i_key: (bs, num_pred_steps, obs_i_shape)}
+
+        New:
+        :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
+        :param actions: (bs, 1, action_dim)
+        :param next_obses: Batch(obs_i_key: (bs, stack_num, 1, obs_i_shape))
+
         :return: {"loss_name": loss_value}
         """
         features = self.encoder(obses)

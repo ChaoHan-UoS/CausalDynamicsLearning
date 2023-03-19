@@ -1,5 +1,5 @@
 {
-    "info": "chemical_collider_dynamics_cmi",
+    "info": "chemical_full_dynamics_cmi",
     "obs_keys": ["obj0", "obj1", "obj2", "obj3", "obj4"],
     "goal_keys": [],
     "seed": 0,
@@ -47,9 +47,9 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 50,
-            "num_target_interventions": 30,
-            "g": "{0-3}->4",
+            "max_steps": 4,
+            "num_target_interventions": 4,
+            "g": "{0-4}->{0-4}",
             "match_type": "all",
             "dense_reward": true
         }
@@ -61,7 +61,7 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 500000,
+        "total_steps": 50000,
         "init_steps": 10000,
         "collect_env_step": true,
         "inference_gradient_steps": 1,

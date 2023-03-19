@@ -5,7 +5,6 @@ import numpy as np
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-
 np.set_printoptions(precision=3, suppress=True)
 torch.set_printoptions(precision=3, sci_mode=False)
 
@@ -13,22 +12,18 @@ from model.inference_mlp import InferenceMLP
 from model.inference_gnn import InferenceGNN
 from model.inference_reg import InferenceReg
 from model.inference_nps import InferenceNPS
-from model.inference_cmi import InferenceCMI
+from model.inference_cmi_old import InferenceCMI
 
-from model.random_policy import RandomPolicy
+from model.random_policy import RandomPolicy  # random agent in tianshou's collector
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
 from model.encoder import make_encoder
 
-from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
-    get_start_step_from_model_loading, preprocess_obs, postprocess_obs
-# from utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer  # use tianshou's buffer instead
+from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, get_start_step_from_model_loading
+from utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer  # use tianshou's buffer
 from utils.plot import plot_adjacency_intervention_mask
 from utils.scripted_policy import get_scripted_policy, get_is_demo
-
-from tianshou.data import Batch, ReplayBuffer, PrioritizedReplayBuffer
-from tianshou.data import to_torch
 
 from env.chemical_env import Chemical
 
@@ -39,6 +34,8 @@ def train(params):
 
     params.device = device
     training_params = params.training_params
+    # print(training_params)
+    # sys.exit()
     inference_params = params.inference_params
     policy_params = params.policy_params
     cmi_params = inference_params.cmi_params
@@ -50,9 +47,6 @@ def train(params):
     env = get_env(params, render)
     if isinstance(env, Chemical):
         torch.save(env.get_save_information(), os.path.join(params.rslts_dir, "chemical_env_params"))
-    hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
-    num_objects = params.env_params.chemical_env_params.num_objects
-    params.obs_keys = [params.obs_keys[i] for i in range(num_objects) if i not in hidden_objects_ind]
 
     # init model
     update_obs_act_spec(env, params)
@@ -88,23 +82,12 @@ def train(params):
         raise NotImplementedError
 
     # init replay buffer
-    replay_buffer_params = training_params.replay_buffer_params
-    use_prioritized_buffer = getattr(replay_buffer_params, "prioritized_buffer", False)
+    use_prioritized_buffer = getattr(training_params.replay_buffer_params, "prioritized_buffer", False)
     if use_prioritized_buffer:
         assert is_task_learning
-        replay_buffer = PrioritizedReplayBuffer(
-            alpha=replay_buffer_params.prioritized_alpha,
-        )
+        replay_buffer = PrioritizedReplayBuffer(params)
     else:
-        buffer_train = ReplayBuffer(
-            size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
-            # save_only_last_obs=True
-        )
-        buffer_eval_cmi = ReplayBuffer(
-            size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
-        )
+        replay_buffer = ReplayBuffer(params)
 
     # init saving
     writer = SummaryWriter(os.path.join(params.rslts_dir, "tensorboard"))
@@ -195,21 +178,11 @@ def train(params):
                     action = action_policy.act(obs)
 
             next_obs, env_reward, terminated, truncated, info = env.step(action)
-            # print("ACTION")
-            # print(action)
-            # print("NEXT OBS")
-            # print(next_obs)
-            # print("REWARD")
-            # print(env_reward, info)
-            # print("TERMINATED/TRUNCATED")
-            # print(terminated, truncated)
-            # print("\n")
-
             done = truncated or terminated
             # print(action)
-            # sys.exit()
             # print(next_obs)
             # print(env_reward, done, info, '\n')
+            # sys.exit()
 
             if is_task_learning and not is_vecenv:
                 success = success or info["success"]
@@ -218,47 +191,8 @@ def train(params):
             episode_reward += env_reward if is_task_learning else inference_reward
             episode_step += 1
 
-            # save env transitions in the replay buffer
-            obs = preprocess_obs(obs, params)  # filter unused obs keys
-            obs['act'] = np.array([action])
-            obs['episode_step'] = np.array([episode_step])
-            next_obs = preprocess_obs(next_obs, params)
-            next_obs['act'] = np.array([0])
-            next_obs['episode_step'] = np.array([episode_step + 1])
-
-            # print(f"EPISODE STEP: {episode_step}")
-            # if episode_step >= replay_buffer_params.stack_num:
             # is_train: if the transition is training data or evaluation data for inference_cmi
-            if is_train:
-                buffer_train.add(
-                    Batch(obs=obs,
-                          act=action,
-                          rew=env_reward,
-                          terminated=terminated,
-                          truncated=truncated,
-                          obs_next=next_obs,
-                          info=info,
-                          )
-                )
-                if step > 0:
-                    temp = buffer_train.obs_next[step - 1]
-                    temp.act = obs['act']
-                    buffer_train.obs_next[step - 1] = temp
-            else:
-                buffer_eval_cmi.add(
-                    Batch(obs=obs,
-                          act=action,
-                          rew=env_reward,
-                          terminated=terminated,
-                          truncated=truncated,
-                          obs_next=next_obs,
-                          info=info,
-                          )
-                )
-                if step > 0:
-                    temp = buffer_eval_cmi.obs_next[step - 1]
-                    temp.act = obs['act']
-                    buffer_eval_cmi.obs_next[step - 1] = temp
+            replay_buffer.add(obs, action, env_reward, next_obs, done, is_train, info)
 
             # ppo uses its own buffer
             if rl_algo == "hippo" and not is_init_stage:
@@ -274,12 +208,8 @@ def train(params):
             inference.train()
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
-                batch_data, _ = buffer_train.sample(inference_params.batch_size)
-                obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                for key, tensor in next_obses_batch.items():
-                    next_obses_batch[key] = tensor.unsqueeze(-1)
+                obs_batch, actions_batch, next_obses_batch = \
+                    replay_buffer.sample_inference(inference_params.batch_size, "train")
                 # print(obs_batch)
                 # print(actions_batch)
                 # print(next_obses_batch)
@@ -293,17 +223,14 @@ def train(params):
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
-                        batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                        actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                        next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                        for key, tensor in next_obses_batch.items():
-                            next_obses_batch[key] = tensor.unsqueeze(1)
+                        obs_batch, actions_batch, next_obses_batch = \
+                            replay_buffer.sample_inference(cmi_params.eval_batch_size, use_part="eval")
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
-                    batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    loss_detail = inference.update(batch_data.obs, batch_data.act, batch_data.obs_next, eval=True)
+                    obs_batch, actions_batch, next_obses_batch = \
+                        replay_buffer.sample_inference(cmi_params.eval_batch_size, use_part="eval")
+                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
 
         if policy_gradient_steps > 0 and rl_algo != "random":
@@ -347,4 +274,6 @@ def train(params):
 
 if __name__ == "__main__":
     params = TrainingParams(training_params_fname="policy_params.json", train=True)
+    # print(params.env_params.chemical_env_params.height)
+    # sys.exit()
     train(params)

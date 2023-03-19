@@ -28,11 +28,6 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
-        # print('\nTrainable parameters within InferenceCMI class')
-        # for name, value in self.named_parameters():
-        #     print(name, value.shape)
-        # sys.exit()
-
     def init_model(self):
         params = self.params
         cmi_params = self.cmi_params
@@ -40,8 +35,7 @@ class InferenceCMI(Inference):
         # model params
         continuous_state = self.continuous_state
 
-        # self.action_dim = action_dim = params.action_dim
-        self.action_dim = action_dim = len(params.obs_keys)  # RNN reconstruct the full action dim
+        self.action_dim = action_dim = params.action_dim
         self.feature_dim = feature_dim = self.encoder.feature_dim
         if not self.continuous_state:
             self.feature_inner_dim = self.encoder.feature_inner_dim
@@ -519,7 +513,7 @@ class InferenceCMI(Inference):
         sa_feature_cache = []
 
         if not self.continuous_action:
-            actions = F.one_hot(actions.squeeze(dim=-1), self.action_dim).float()   # (bs, n_pred_step, action_dim)
+            actions = F.one_hot(actions.squeeze(dim=-1), self.action_dim).float()  # (bs, n_pred_step, action_dim)
 
         actions = torch.unbind(actions, dim=-2)                                     # [(bs, action_dim)] * n_pred_step
         for i, action in enumerate(actions):
@@ -673,16 +667,9 @@ class InferenceCMI(Inference):
 
     def update(self, obs, actions, next_obses, eval=False):
         """
-        Old:
         :param obs: {obs_i_key: (bs, obs_i_shape)}
-        :param actions: (bs, n_pred_step, 1)
+        :param actions: (bs, n_pred_step, action_dim)
         :param next_obses: {obs_i_key: (bs, n_pred_step, obs_i_shape)}
-
-        New:
-        :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
-        :param actions: (bs, 1, 1)  # (bs, 1, action_dim) for one-hot actions
-        :param next_obses: Batch(obs_i_key: (bs, stack_num, 1, obs_i_shape))
-
         :return: {"loss_name": loss_value}
         """
         self.update_num += 1
@@ -690,11 +677,16 @@ class InferenceCMI(Inference):
         eval_freq = self.cmi_params.eval_freq
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
+        # print(actions, type(actions))
+        # sys.exit()
         bs = actions.size(0)
         mask = self.get_training_mask(bs)                           # (bs, feature_dim, feature_dim + 1)
 
         feature = self.encoder(obs)
         next_feature = self.encoder(next_obses)
+        # print(feature)
+        # print(next_feature)
+        # sys.exit()
         pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
 
         # prediction loss in the state / latent space, (bs, n_pred_step)

@@ -1,5 +1,5 @@
 {
-    "info": "chemical_collider_task_cmi",
+    "info": "chemical_full_task_cmi",
     "obs_keys": ["obj0", "obj1", "obj2", "obj3", "obj4"],
     "goal_keys": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
     "seed": 0,
@@ -47,9 +47,9 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 50,
-            "num_target_interventions": 30,
-            "g": "{0-3}->4",
+            "max_steps": 4,
+            "num_target_interventions": 4,
+            "g": "{0-4}->{0-4}",
             "match_type": "all",
             "dense_reward": true
         }

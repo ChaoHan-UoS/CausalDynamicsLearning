@@ -39,7 +39,7 @@ graphs = {
     'collider15': '{0-13}->14',
     'confounder3': '{0-2}->{0-2}',
     'chain4': '0->1->2->3',
-    'chain5': '0->1->2->3->4',
+    'chain5': '0->1->2->3->4->0',
     'chain6': '0->1->2->3->4->5',
     'chain7': '0->1->2->3->4->5->6',
     'chain8': '0->1->2->3->4->5->6->7',
@@ -264,7 +264,8 @@ class MLP(nn.Module):
         colorid_r = x[0, r * self.num_colors: (r + 1) * self.num_colors].argmax()
 
         # state transition of a variable when the action node of its parent variable is intervened
-        colorid_v = (colorid_v + colorid_r) % self.num_colors
+        # colorid_v = (colorid_v + colorid_r) % self.num_colors
+        colorid_v = (colorid_v + 1) % self.num_colors
         # colorid_v = colorid_v % self.num_colors
 
         color_v = torch.zeros(self.num_colors)
@@ -336,6 +337,16 @@ class Chemical(gym.Env):
         if self.match_type == "all":
             self.match_type = list(range(self.num_objects))
 
+        self.hidden_objects_ind = chemical_env_params.hidden_objects_ind
+        self.hidden_targets_ind = chemical_env_params.hidden_targets_ind
+        full_obs_dims = range(2 * self.num_objects)
+        hidden_obs_dims = self.hidden_objects_ind + [self.num_objects + i for i in self.hidden_targets_ind]
+        self.partial_obs_dims = [i for i in full_obs_dims if i not in hidden_obs_dims]
+        assert 0 < len(self.partial_obs_dims) <= len(full_obs_dims)
+
+        self.partial_act_dims = [i for i in range(self.num_objects) if i not in self.hidden_objects_ind]
+        self.action_dim = len(self.partial_act_dims)
+
         # All objects have the same MLP structure and paramters but with different inputs.
         self.mlps = [MLP(self.num_objects, self.num_colors).to(device) for _ in range(self.num_objects)]
 
@@ -347,8 +358,6 @@ class Chemical(gym.Env):
         self.actions_to_target = []
 
         self.objects = OrderedDict()
-
-        self.action_dim = self.num_actions
 
         self.reset()
 
@@ -472,15 +481,19 @@ class Chemical(gym.Env):
         state = {}
         for idx, obj in self.objects.items():
             if self.continuous_pos:
-                state["obj{}".format(idx)] = np.array([obj.color, obj.x, obj.y])
+                # state["obj{}".format(idx)] = np.array([obj.color, obj.x, obj.y])
+                state["obj{}".format(idx)] = np.array([obj.color])
             else:
-                state["obj{}".format(idx)] = np.array([obj.color, obj.pos.x, obj.pos.y])
+                # state["obj{}".format(idx)] = np.array([obj.color, obj.pos.x, obj.pos.y])
+                state["obj{}".format(idx)] = np.array([obj.color])
         for idx, color in enumerate(self.object_to_color_target_np):
             state["target_obj{}".format(idx)] = np.array([color])
         if self.render_image:
             image, goal_image = self.render()
             state["image"], state["goal_image"] = (image * 255).astype(np.uint8), (goal_image * 255).astype(np.uint8)
-        return state
+        partial_obs_keys = [list(state.keys())[i] for i in self.partial_obs_dims]
+        partial_state = {key: state[key] for key in partial_obs_keys}
+        return partial_state
 
     def observation_spec(self):
         return self.get_state()
@@ -489,12 +502,15 @@ class Chemical(gym.Env):
         state = {}
         for idx, obj in self.objects.items():
             if self.continuous_pos:
-                state["obj{}".format(idx)] = np.array([self.num_colors, 1, 1])
+                # state["obj{}".format(idx)] = np.array([self.num_colors, 1, 1])
+                state["obj{}".format(idx)] = np.array([self.num_colors])
             else:
                 state["obj{}".format(idx)] = np.array([self.num_colors, self.width, self.height])
         for idx, color in enumerate(self.object_to_color_target):
             state["target_obj{}".format(idx)] = np.array([self.num_colors])
-        return state
+        partial_obs_keys = [list(state.keys())[i] for i in self.partial_obs_dims]
+        partial_state = {key: state[key] for key in partial_obs_keys}
+        return partial_state
 
     def generate_masks(self):
         """Generate masks so that each variable only receives input from its parents"""
@@ -502,12 +518,21 @@ class Chemical(gym.Env):
         mask = mask.repeat(1, 1, self.num_colors)
         self.mask = mask.view(self.adjacency_matrix.size(0), -1)
 
-    def generate_target(self, num_steps=10):
+    def generate_target(self, num_steps=3):
         self.actions_to_target = []
         for i in range(num_steps):
-            intervention_id = self.np_random.integers(0, self.num_objects - 1)
+            intervention_id = self.np_random.choice(self.partial_act_dims)
             self.actions_to_target.append(intervention_id)
+            ########################################################
+            print(f"ACTIONS_TO_TARGET AT STEP {i}")
+            print(self.actions_to_target[-1])
+            ########################################################
+
             self.sample_variables_target(intervention_id)
+            ########################################################
+            print(f"OBJECT_TO_COLOR_TARGET AT STEP {i}")
+            print(self.object_to_color_target, '\n')
+            ########################################################
 
         matches = 0.
         for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
@@ -520,7 +545,7 @@ class Chemical(gym.Env):
         if self.dense_reward:
             self.reward_baseline  = matches / num_needed_match
 
-    def reset(self, num_steps=10):
+    def reset(self, num_steps=3):
         self.cur_step = 0
 
         self.object_to_color = [torch.zeros(self.num_colors, device=self.device) for _ in range(self.num_objects)]
@@ -560,6 +585,10 @@ class Chemical(gym.Env):
 
         for i in range(len(self.object_to_color)):
             self.object_to_color_target[i][to_numpy(self.object_to_color[i].argmax())] = 1
+        ########################################################
+        print('OBJECT_TO_COLOR_TARGET INITIAL')
+        print(self.object_to_color_target)
+        ########################################################
 
         self.generate_target(num_steps)
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
@@ -625,7 +654,8 @@ class Chemical(gym.Env):
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
     def step(self, action: int):
-        obj_id = action
+        partial_action = self.partial_act_dims[action]
+        obj_id = partial_action
         self.translate(obj_id)
 
         if self.continuous_pos:
@@ -661,7 +691,19 @@ class Chemical(gym.Env):
         self.cur_step += 1
 
         state = self.get_state()
-        terminated = False
+        terminated = matches == num_needed_match
         truncated = self.cur_step >= self.max_steps
+
+        ########################################################
+        print("ACTION ENV")
+        print(action)
+        print(partial_action)
+        print("NEXT OBS ENV")
+        print(self.object_to_color)
+        print(state)
+        print("REWARD ENV")
+        print(reward, truncated, info)
+        print("\n")
+        ########################################################
 
         return state, reward, terminated, truncated, info

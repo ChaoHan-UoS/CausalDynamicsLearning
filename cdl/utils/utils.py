@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import json
 import torch
@@ -6,10 +7,11 @@ import shutil
 import random
 import numpy as np
 
-from robosuite.controllers import load_controller_config
-from robosuite.utils.input_utils import *
+# from robosuite.controllers import load_controller_config
+# from robosuite.utils.input_utils import *
 from env.physical_env import Physical
 from env.chemical_env import Chemical
+# from env.chemical_env_wrapper import ChemPOMDPWrapper
 from utils.multiprocessing_env import SubprocVecEnv
 
 
@@ -168,6 +170,10 @@ def update_obs_act_spec(env, params):
         params.obs_dims = obs_dims = env.observation_dims()
         params.action_spec = None
 
+    # print(params.action_dim)
+    # print(params.obs_spec)
+    # sys.exit()
+
 
 def get_single_env(params, render=False):
     env_params = params.env_params
@@ -197,6 +203,7 @@ def get_single_env(params, render=False):
         env = Physical(params)
     elif env_name == "Chemical":
         env = Chemical(params)
+        # env = ChemPOMDPWrapper(Chemical(params), partial_obs_dims)
     else:
         raise ValueError("Unknown env_name: {}".format(env_name))
 

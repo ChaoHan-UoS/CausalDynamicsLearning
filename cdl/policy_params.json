@@ -1,7 +1,7 @@
 {
-    "info": "chemical_collider_task_cmi",
+    "info": "chemical_full_dynamics_cmi",
     "obs_keys": ["obj0", "obj1", "obj2", "obj3", "obj4"],
-    "goal_keys": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
+    "goal_keys": [],
     "seed": 0,
     "cuda_id": 0,
     "env_params": {
@@ -35,6 +35,8 @@
             "dense_reward": true
         },
         "chemical_env_params": {
+            "hidden_objects_ind": [2],
+            "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 5,
             "continuous_pos": true,
@@ -47,25 +49,25 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 50,
-            "num_target_interventions": 30,
-            "g": "{0-3}->4",
+            "max_steps": 10,
+            "num_target_interventions": 5,
+            "g": "chain5",
             "match_type": "all",
             "dense_reward": true
         }
     },
     "training_params": {
         "inference_algo": "cmi",
-        "rl_algo": "model_based",
-        "load_inference": "put_model_path_here",
+        "rl_algo": "random",
+        "load_inference": "",
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 500000,
-        "init_steps": 250,
+        "total_steps": 50000,
+        "init_steps": 30,
         "collect_env_step": true,
-        "inference_gradient_steps": 0,
-        "policy_gradient_steps": 1,
+        "inference_gradient_steps": 1,
+        "policy_gradient_steps": 0,
         "saving_freq": 5000,
         "plot_freq": 10000,
         "replay_buffer_params": {
@@ -73,15 +75,20 @@
             "max_sample_time": 128,
             "saving_freq": 0,
             "prioritized_buffer": false,
-            "prioritized_alpha": 0.2
+            "prioritized_alpha": 0.2,
+            "stack_num": 4
         }
     },
     "encoder_params": {
-        "encoder_type": "identity"
+        "encoder_type": "recurrent",
+         "recurrent_enc_params": {
+            "layer_num": 2,
+            "hidden_layer_size": 128
+         }
     },
     "inference_params": {
-        "n_pred_step": 2,
-        "batch_size": 64,
+        "n_pred_step": 1,
+        "batch_size": 2,
         "lr": 1e-4,
         "train_prop": 0.9,
         "residual": true,
@@ -96,7 +103,7 @@
             "eval_tau": 0.999,
             "eval_freq": 10,
             "eval_steps": 1,
-            "eval_batch_size": 32,
+            "eval_batch_size": 3,
             "CMI_threshold": 0.02
         },
         "nps_params": {
