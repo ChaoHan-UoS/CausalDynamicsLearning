@@ -279,12 +279,12 @@ class Inference(nn.Module):
         """
         Old:
         :param obs: {obs_i_key: (bs, num_observation_steps, obs_i_shape)}
-        :param actions: (bs, num_pred_steps, action_dim)
+        :param actions: (bs, num_pred_steps, 1)
         :param next_obses: {obs_i_key: (bs, num_pred_steps, obs_i_shape)}
 
         New:
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
-        :param actions: (bs, 1, action_dim)
+        :param actions: (bs, 1, 1)
         :param next_obses: Batch(obs_i_key: (bs, stack_num, 1, obs_i_shape))
 
         :return: {"loss_name": loss_value}

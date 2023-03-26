@@ -167,7 +167,7 @@ def update_obs_act_spec(env, params):
         # params.workspace_scale = workspace_scale = {k: v[1] - v[0] for k, v in workspace_spec.items()}
         # params.workspace_scale_array = np.concatenate([workspace_scale[k] for k in params.obs_keys], axis=-1)
     else:
-        params.obs_dims = obs_dims = env.observation_dims()
+        params.obs_dims, params.obs_dims_f = obs_dims, obs_dims_f = env.observation_dims()
         params.action_spec = None
 
     # print(params.action_dim)

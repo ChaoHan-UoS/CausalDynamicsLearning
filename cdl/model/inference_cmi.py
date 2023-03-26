@@ -40,26 +40,27 @@ class InferenceCMI(Inference):
         # model params
         continuous_state = self.continuous_state
 
-        # self.action_dim = action_dim = params.action_dim
-        self.action_dim = action_dim = len(params.obs_keys)  # RNN reconstruct the full action dim
+        self.action_dim = action_dim = params.action_dim
+        # self.num_objects = params.env_params.chemical_env_params.num_objects
+        # self.action_dim = action_dim = self.num_objects  # RNN reconstruct the full action dim
         self.feature_dim = feature_dim = self.encoder.feature_dim
         if not self.continuous_state:
             self.feature_inner_dim = self.encoder.feature_inner_dim
 
-        self.action_feature_weights = nn.ParameterList()
-        self.action_feature_biases = nn.ParameterList()
-        self.state_feature_weights = nn.ParameterList()
-        self.state_feature_biases = nn.ParameterList()
-        self.generative_weights = nn.ParameterList()
-        self.generative_biases = nn.ParameterList()
+        self.action_feature_weights = nn.ParameterList()  # [(feature_dim, in_dim_i, out_dim_i)] * len(feature_fc_dims)
+        self.action_feature_biases = nn.ParameterList()  # [(feature_dim, 1, out_dim_i)] * len(feature_fc_dims)
+        self.state_feature_weights = nn.ParameterList()  # (feature_dim * feature_dim, in_dim_i, out_dim_i) * len(feature_fc_dims[1:]) for discrete state space
+        self.state_feature_biases = nn.ParameterList()  # (feature_dim * feature_dim, 1, out_dim_i) * len(feature_fc_dims[1:]) for discrete state space
+        self.generative_weights = nn.ParameterList()  # [(feature_dim, in_dim_i, out_dim_i)] * len(generative_fc_dims)
+        self.generative_biases = nn.ParameterList()  # [(feature_dim, 1, out_dim_i)] * len(generative_fc_dims)
 
         # only needed for discrete state space
-        self.state_feature_1st_layer_weights = nn.ParameterList()
-        self.state_feature_1st_layer_biases = nn.ParameterList()
-        self.generative_last_layer_weights = nn.ParameterList()
-        self.generative_last_layer_biases = nn.ParameterList()
+        self.state_feature_1st_layer_weights = nn.ParameterList()  # [(feature_dim, feature_inner_dim_i, out_dim)] * len(feature_inner_dim)
+        self.state_feature_1st_layer_biases = nn.ParameterList()  # [(feature_dim, 1, out_dim)] * len(feature_inner_dim)
+        self.generative_last_layer_weights = nn.ParameterList()  # [(1, in_dim, feature_inner_dim_i)] * len(feature_inner_dim)
+        self.generative_last_layer_biases = nn.ParameterList()  # [(1, 1, feature_inner_dim_i)] * len(feature_inner_dim)
 
-        # Instantiate the parameters of each layer in the model of each variable
+        # Instantiate the parameters of each layer in the model of each variable at next time step to predict
         # action feature extractor
         in_dim = action_dim
         for out_dim in cmi_params.feature_fc_dims:
@@ -126,7 +127,7 @@ class InferenceCMI(Inference):
         # used for masking diagonal elements
         self.diag_mask = torch.eye(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)
         self.mask_CMI = torch.ones(feature_dim, feature_dim + 1, device=device) * self.CMI_threshold
-        self.mask = torch.ones(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)
+        self.mask = torch.ones(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)  # mask parent features
         self.CMI_history = []
 
     def init_abstraction(self):
@@ -157,7 +158,7 @@ class InferenceCMI(Inference):
         """
         action = action.unsqueeze(dim=0)                                    # (1, bs, action_dim)
         action = action.expand(self.feature_dim, -1, -1)                    # (feature_dim, bs, action_dim)
-        action_feature = forward_network(action, self.action_feature_weights, self.action_feature_biases)
+        action_feature = forward_network(action, self.action_feature_weights, self.action_feature_biases)  # (feature_dim, bs, feature_fc_dims[0])
         return action_feature.unsqueeze(dim=1)                              # (feature_dim, 1, bs, out_dim)
 
     def extract_state_feature(self, feature):
@@ -250,7 +251,7 @@ class InferenceCMI(Inference):
             generative_last_layer_weights = self.generative_last_layer_weights
             generative_last_layer_biases = self.generative_last_layer_biases
 
-        x = forward_network(sa_feature, generative_weights, generative_biases)
+        x = forward_network(sa_feature, generative_weights, generative_biases)  # (feature_dim, bs, out_dim)
 
         if self.continuous_state:
             x = x.permute(1, 0, 2)                                          # (bs, feature_dim, 2)
@@ -262,7 +263,7 @@ class InferenceCMI(Inference):
             x = forward_network_batch(x,
                                       generative_last_layer_weights,
                                       generative_last_layer_biases,
-                                      activation=None)
+                                      activation=None)                      # [(1, bs, feature_inner_dim_i)] * feature_dim
 
             feature_inner_dim = self.feature_inner_dim
             if abstraction_mode:
@@ -304,13 +305,13 @@ class InferenceCMI(Inference):
 
         if action_feature is None:
             # extract features of the action
-            # (feature_dim, 1, bs, out_dim)
+            # (bs, action_dim) -> (feature_dim, 1, bs, out_dim)
             self.action_feature = action_feature = self.extract_action_feature(action)
 
         if forward_full:
             # 1. extract features of all state variables
             if full_state_feature is None:
-                # (feature_dim, feature_dim, bs, out_dim)
+                # [(bs, feature_i_dim)] * feature_dim -> (feature_dim, feature_dim, bs, out_dim)
                 self.full_state_feature = full_state_feature = self.extract_state_feature(full_feature)
 
             # 2. extract global feature by element-wise max
@@ -319,10 +320,10 @@ class InferenceCMI(Inference):
             full_sa_feature, full_sa_indices = full_sa_feature.max(dim=1)           # (feature_dim, bs, out_dim)
 
             # 3. predict the distribution of next time step value
-            full_dist = self.predict_from_sa_feature(full_sa_feature, full_feature)
+            full_dist = self.predict_from_sa_feature(full_sa_feature, full_feature)  # [(bs, feature_i_dim)] * feature_dim
 
         if forward_masked:
-            # 1. extract features of all state variables and the action
+            # 1. extract features of all state variables
             # (feature_dim, feature_dim, bs, out_dim)
             masked_state_feature = self.extract_masked_state_feature(masked_feature, full_state_feature)
 
@@ -335,10 +336,10 @@ class InferenceCMI(Inference):
             masked_sa_feature, masked_sa_indices = masked_sa_feature.max(dim=1)     # (feature_dim, bs, out_dim)
 
             # 3. predict the distribution of next time step value
-            masked_dist = self.predict_from_sa_feature(masked_sa_feature, masked_feature)
+            masked_dist = self.predict_from_sa_feature(masked_sa_feature, masked_feature)  # [(bs, feature_i_dim)] * feature_dim
 
         if forward_causal:
-            # 1. extract features of all state variables and the action
+            # 1. extract features of all state variables
             causal_state_feature = self.extract_state_feature(causal_feature)
 
             # 2. extract global feature by element-wise max
@@ -346,11 +347,11 @@ class InferenceCMI(Inference):
             # (feature_dim, feature_dim + 1, bs, out_dim)
             causal_sa_feature = torch.cat([causal_state_feature, action_feature], dim=1)
             eval_mask = self.mask.detach()                                          # (feature_dim, feature_dim + 1)
-            causal_sa_feature[~eval_mask] = float('-inf')
+            causal_sa_feature[~eval_mask] = float('-inf')                           # mask out non-parent features
             causal_sa_feature, causal_sa_indices = causal_sa_feature.max(dim=1)     # (feature_dim, bs, out_dim)
 
             # 3. predict the distribution of next time step value
-            causal_dist = self.predict_from_sa_feature(causal_sa_feature, causal_feature)
+            causal_dist = self.predict_from_sa_feature(causal_sa_feature, causal_feature)  # [(bs, feature_i_dim)] * feature_dim
 
         return full_dist, masked_dist, causal_dist
 
@@ -451,7 +452,6 @@ class InferenceCMI(Inference):
     def forward_with_feature(self, feature, actions, mask=None,
                              forward_mode=("full", "masked", "causal"), abstraction_mode=False):
         """
-
         :param feature: (bs, feature_dim) if state space is continuous else [(bs, feature_i_dim)] * feature_dim
             notice that bs can be a multi-dimensional batch size
         :param actions: (bs, n_pred_step, action_dim) if self.continuous_action else (bs, n_pred_step, 1)
@@ -463,7 +463,7 @@ class InferenceCMI(Inference):
         :param abstraction_mode: whether to only forward controllable & action-relevant state variables,
             used for model-based roll-out
         :return: a single distribution or a list of distributions depending on forward_mode,
-            each distribution is of shape (bs, n_pred_step, feature_dim)
+            each distribution is of shape (bs, n_pred_step, feature_i_dim)
             notice that bs can be a multi-dimensional batch size
         """
         def get_dist_and_feature(prev_dist_, dist_):
@@ -535,8 +535,9 @@ class InferenceCMI(Inference):
             else:
                 full_dist, masked_dist, causal_dist = \
                     self.forward_step(full_feature, masked_feature, causal_feature, action, mask,
-                                      action_feature, full_state_feature)
+                                      action_feature, full_state_feature)           # one-step forward prediction
 
+            # sample feature from the distribution
             full_dist, full_feature = get_dist_and_feature(prev_full_dist, full_dist)
             masked_dist, masked_feature = get_dist_and_feature(prev_masked_dist, masked_dist)
             causal_dist, causal_feature = get_dist_and_feature(prev_causal_dist, causal_dist)
@@ -564,6 +565,7 @@ class InferenceCMI(Inference):
         if len(forward_mode) == 1:
             return result_dists[0]
 
+        # a list of 3, each of [OneHotCategorical / Normal] * feature_dim, each of shape (bs, feature_i_dim)
         return result_dists
 
     def restore_batch_size_shape(self, dist, bs):
@@ -627,7 +629,7 @@ class InferenceCMI(Inference):
 
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
         """
-        calculate prediction loss for each prediction distributions
+        calculate total prediction loss for full, masked and/or causal prediction distributions
         if use CNN encoder: prediction loss = KL divergence
         else: prediction loss = -log_prob
         :param pred_next_dist:
@@ -699,7 +701,7 @@ class InferenceCMI(Inference):
 
         # prediction loss in the state / latent space, (bs, n_pred_step)
         if not self.update_num % (eval_freq * inference_gradient_steps):
-            pred_next_dist = pred_next_dist[:2]
+            pred_next_dist = pred_next_dist[:2]                     # only consider full and masked distributions when updating causal mask
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
 
         loss = pred_loss

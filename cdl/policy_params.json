@@ -1,6 +1,6 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys": ["obj0", "obj1", "obj2", "obj3", "obj4"],
+    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
     "goal_keys": [],
     "seed": 0,
     "cuda_id": 0,

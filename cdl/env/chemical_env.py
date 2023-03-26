@@ -510,7 +510,7 @@ class Chemical(gym.Env):
             state["target_obj{}".format(idx)] = np.array([self.num_colors])
         partial_obs_keys = [list(state.keys())[i] for i in self.partial_obs_dims]
         partial_state = {key: state[key] for key in partial_obs_keys}
-        return partial_state
+        return partial_state, state
 
     def generate_masks(self):
         """Generate masks so that each variable only receives input from its parents"""

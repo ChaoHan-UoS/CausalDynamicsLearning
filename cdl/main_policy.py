@@ -52,7 +52,7 @@ def train(params):
         torch.save(env.get_save_information(), os.path.join(params.rslts_dir, "chemical_env_params"))
     hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
     num_objects = params.env_params.chemical_env_params.num_objects
-    params.obs_keys = [params.obs_keys[i] for i in range(num_objects) if i not in hidden_objects_ind]
+    params.obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_objects_ind]
 
     # init model
     update_obs_act_spec(env, params)
@@ -298,7 +298,7 @@ def train(params):
                         actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
                         next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
                         for key, tensor in next_obses_batch.items():
-                            next_obses_batch[key] = tensor.unsqueeze(1)
+                            next_obses_batch[key] = tensor.unsqueeze(-1)
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
