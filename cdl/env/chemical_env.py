@@ -20,7 +20,6 @@ from env.drawing import render_cubes, get_colors_and_weights
 from env.physical_env import Coord
 import random
 
-
 graphs = {
     'chain3': '0->1->2->0',
     'fork3': '0->{1-2}',
@@ -114,7 +113,7 @@ def parse_skeleton(graph, M=None):
         SET_ELEM   = INT | INT_RANGE
         INT_RANGE  = INT - INT
     """
-    
+
     regex = re.compile(r'''
         \s*                                      # Skip preceding whitespace
         (                                        # The set of tokens we may capture, including
@@ -130,38 +129,42 @@ def parse_skeleton(graph, M=None):
           (?:->)                                 # Arrows
         )
     ''', re.A | re.X)
-    
+
     # Utilities
     def parse_int(s):
-        try:    return int(s.strip())
-        except: return None
-    
+        try:
+            return int(s.strip())
+        except:
+            return None
+
     def parse_intrange(s):
         try:
             sa, sb = map(str.strip, s.strip().split("-", 1))
             sa, sb = int(sa), int(sb)
-            sa, sb = min(sa,sb), max(sa,sb)+1
-            return range(sa,sb)
+            sa, sb = min(sa, sb), max(sa, sb) + 1
+            return range(sa, sb)
         except:
             return None
-    
+
     def parse_intset(s):
         try:
             i = set()
             for s in map(str.strip, s.strip()[1:-1].split(",")):
-                if parse_int(s) is not None: i.add(parse_int(s))
-                else:                        i.update(set(parse_intrange(s)))
+                if parse_int(s) is not None:
+                    i.add(parse_int(s))
+                else:
+                    i.update(set(parse_intrange(s)))
             return sorted(i)
         except:
             return None
-    
+
     def parse_either(s):
         asint = parse_int(s)
         if asint is not None: return asint
         asset = parse_intset(s)
         if asset is not None: return asset
         raise ValueError
-    
+
     def find_max(chains):
         m = 0
         for chain in chains:
@@ -169,32 +172,32 @@ def parse_skeleton(graph, M=None):
                 link = max(link) if isinstance(link, list) else link
                 m = max(link, m)
         return m
-    
+
     # Crack the string into a list of lists of (ints | lists of ints)
     graph = [graph] if isinstance(graph, str) else graph
     chains = []
     for gstr in graph:
         for chain in re.findall("((?:[^,{]+|\{.*?\})+)+", gstr, re.A):
             links = list(map(str.strip, regex.findall(chain)))
-            assert(len(links) & 1)
-            
+            assert (len(links) & 1)
+
             chain = [parse_either(links.pop(0))]
             while links:
                 assert links.pop(0) == "->"
                 chain.append(parse_either(links.pop(0)))
             chains.append(chain)
-    
+
     # Find the maximum integer referenced within the skeleton
     uM = find_max(chains) + 1
     if M is None:
         M = uM
     else:
-        assert(M >= uM)
+        assert (M >= uM)
         M = max(M, uM)
-    
+
     # Allocate adjacency matrix.
     gamma = np.zeros((M, M), dtype=np.float32)
-    
+
     # Interpret the skeleton
     for chain in chains:
         for prevlink, nextlink in zip(chain[:-1], chain[1:]):
@@ -230,7 +233,7 @@ def parse_skeleton(graph, M=None):
                     gamma[nextlink, prevlink] = 1
                 else:
                     gamma[nextlink, prevlink] = 1
-    
+
     # Return adjacency matrix.
     return gamma
 
@@ -242,11 +245,11 @@ def random_dag(M, N, rng, g=None):
     """Generate a random Directed Acyclic Graph (DAG) with a given number of nodes and edges."""
     if g is None:
         expParents = 5
-        idx        = np.arange(M).astype(np.float32)[:, np.newaxis]
-        idx_maxed  = np.minimum(idx * 0.5, expParents)
-        p          = np.broadcast_to(idx_maxed / (idx + 1), (M, M))
-        B          = rng.binomial(1, p)
-        B          = np.tril(B, -1)
+        idx = np.arange(M).astype(np.float32)[:, np.newaxis]
+        idx_maxed = np.minimum(idx * 0.5, expParents)
+        p = np.broadcast_to(idx_maxed / (idx + 1), (M, M))
+        B = rng.binomial(1, p)
+        B = np.tril(B, -1)
         return B
     else:
         gammagt = parse_skeleton(g, M=M)
@@ -260,7 +263,13 @@ class MLP(nn.Module):
         self.num_colors = num_colors
 
     def forward(self, x, r, v):
-        colorid_v = x[0, v * self.num_colors: (v + 1) * self.num_colors].argmax()
+        """
+        x: current one-hot colors of all objects; shape (1, num_colors * num_objects)
+        r: intervened object; int
+        v: a child object the intervened object; int
+        return: next one-hot color of the child object; shape (1, num_colors)
+        """
+        colorid_v = x[0, v * self.num_colors: (v + 1) * self.num_colors].argmax()  # one-hot color to index
         colorid_r = x[0, r * self.num_colors: (r + 1) * self.num_colors].argmax()
 
         # state transition of a variable when the action node of its parent variable is intervened
@@ -269,7 +278,7 @@ class MLP(nn.Module):
         # colorid_v = colorid_v % self.num_colors
 
         color_v = torch.zeros(self.num_colors)
-        color_v[colorid_v] = 1
+        color_v[colorid_v] = 1  # color index to one-hot
 
         return color_v
 
@@ -310,9 +319,9 @@ class Chemical(gym.Env):
         self.render_type = chemical_env_params.render_type
         if self.render_image:
             assert self.width == self.height
-            self.shape_size = shape_size = chemical_env_params.shape_size       # in pixel
+            self.shape_size = shape_size = chemical_env_params.shape_size  # in pixel
             assert (128 - shape_size) % (self.width - 1) == 0
-            self.grid_size = (128 - shape_size) // (self.width - 1)             # in pixel
+            self.grid_size = (128 - shape_size) // (self.width - 1)  # in pixel
 
         self.num_objects = chemical_env_params.num_objects
         self.movement = chemical_env_params.movement
@@ -374,7 +383,7 @@ class Chemical(gym.Env):
 
     def set_graph(self, g):
         if g in graphs.keys():
-            print('INFO: Loading predefined graph for configuration '+str(g))
+            print('INFO: Loading predefined graph for configuration ' + str(g))
             g = graphs[g]
         num_nodes = self.num_objects
         num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
@@ -543,7 +552,7 @@ class Chemical(gym.Env):
 
         num_needed_match = len(self.match_type)
         if self.dense_reward:
-            self.reward_baseline  = matches / num_needed_match
+            self.reward_baseline = matches / num_needed_match
 
     def reset(self, num_steps=3):
         self.cur_step = 0
@@ -594,7 +603,7 @@ class Chemical(gym.Env):
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
 
         state = self.get_state()
-        info={}
+        info = {}
 
         return state, info
 
