@@ -127,7 +127,8 @@ class InferenceCMI(Inference):
         # used for masking diagonal elements
         self.diag_mask = torch.eye(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)
         self.mask_CMI = torch.ones(feature_dim, feature_dim + 1, device=device) * self.CMI_threshold
-        self.mask = torch.ones(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)  # mask parent features
+        # boolean adjacency matrix that masks parent features to compute causal_dist and correspondingly causal_pred_loss
+        self.mask = torch.ones(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)
         self.CMI_history = []
 
     def init_abstraction(self):
@@ -620,7 +621,7 @@ class InferenceCMI(Inference):
         # omit i-th state variable or the action when predicting the next time step value
         feature_dim = self.feature_dim
 
-        idxes = torch.full(size=(batch_size, feature_dim), fill_value=i, dtype=torch.int64, device=self.device)
+        idxes = torch.full((batch_size, feature_dim), i, dtype=torch.int64, device=self.device)
         self_mask = torch.arange(feature_dim, device=self.device)
         # each state variable must depend on itself when predicting the next time step value
         idxes[idxes >= self_mask] += 1
@@ -649,9 +650,8 @@ class InferenceCMI(Inference):
                 a list of tensors, [(bs, n_pred_step, feature_i_dim)] * feature_dim
         :return: prediction loss and {"loss_name": loss_value}
         """
-        # (bs, n_pred_step, feature_dim)
         pred_losses = [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
-                       for pred_next_dist_i in pred_next_dist]
+                       for pred_next_dist_i in pred_next_dist]              # [(bs, n_pred_step)] * 3
 
         if len(pred_losses) == 2:
             pred_losses.append(None)
@@ -712,6 +712,11 @@ class InferenceCMI(Inference):
         return loss_detail
 
     def update_mask(self, obs, actions, next_obses):
+        """
+        1. use estimated full_dists and masked_dists to compute the CMI matrix 'eval_step_CMI' for all feature pairs
+        2. exponentially smooth 'self.mask_CMI' given the new-coming 'eval_step_CMI'
+        3. threshold 'self.mask_CMI' to get the boolean adjacency matrix 'self.mask' with shape (feature_dim, feature_dim + 1)
+        """
         bs = actions.size(0)
         feature_dim = self.feature_dim
 
@@ -739,13 +744,15 @@ class InferenceCMI(Inference):
                     # pred_loss: (bs, n_pred_step, feature_dim)
                     masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature,
                                                                       keep_variable_dim=True)
-
+                # bs * predicted_next_features
                 masked_pred_loss = masked_pred_loss.mean(dim=1)                         # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)
+
             full_pred_loss = full_pred_loss.mean(dim=1)[..., None]                      # (bs, feature_dim, 1)
             eval_pred_loss = eval_pred_loss.sum(dim=(1, 2)).mean()                      # scalar
             eval_details["eval_pred_loss"] = eval_pred_loss
 
+        # bs * predicted_next_features * masked_current_features (ignore self-connection)
         masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim)
 
         # clean cache
@@ -755,8 +762,9 @@ class InferenceCMI(Inference):
         self.full_state_feature = None
 
         # full_pred_loss uses all state variables + action,
-        # while along dim 1 of, masked_pred_losses drops either one state variable or the action
+        # while along the last dim, masked_pred_losses drops either one state variable or the action
         CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim)
+        # next_jth_feature * current_ith_feature (exclude self-connection, i.e., i != j)
         CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim)
 
         self.eval_step_CMI += CMI
@@ -775,7 +783,7 @@ class InferenceCMI(Inference):
             eval_step_CMI[:, 1:] += upper_tri
             eval_step_CMI[:, :-1] += lower_tri
 
-            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)
+            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
             self.mask = self.mask_CMI >= self.CMI_threshold
             self.mask[self.diag_mask] = True
 

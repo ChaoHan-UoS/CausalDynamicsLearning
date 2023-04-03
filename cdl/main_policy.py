@@ -266,7 +266,7 @@ def train(params):
 
             obs = next_obs
 
-        # training and logging
+        # training
         if is_init_stage:
             continue
 
@@ -323,6 +323,7 @@ def train(params):
                     loss_details["policy"].append(loss_detail)
             policy.eval()
 
+        # logging
         if writer is not None:
             for module_name, module_loss_detail in loss_details.items():
                 if not module_loss_detail:
@@ -338,6 +339,7 @@ def train(params):
             if (step + 1) % training_params.plot_freq == 0 and inference_gradient_steps > 0:
                 plot_adjacency_intervention_mask(params, inference, writer, step)
 
+        # saving training results
         if (step + 1) % training_params.saving_freq == 0:
             if inference_gradient_steps > 0:
                 inference.save(os.path.join(model_dir, "inference_{}".format(step + 1)))

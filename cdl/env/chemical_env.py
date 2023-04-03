@@ -3,6 +3,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import re
 
 import gym
@@ -18,7 +19,6 @@ import skimage.draw
 from env.drawing import diamond, square, triangle, cross, pentagon, parallelogram, scalene_triangle
 from env.drawing import render_cubes, get_colors_and_weights
 from env.physical_env import Coord
-import random
 
 graphs = {
     'chain3': '0->1->2->0',
@@ -256,33 +256,6 @@ def random_dag(M, N, rng, g=None):
         return gammagt
 
 
-class MLP(nn.Module):
-    def __init__(self, num_objs, num_colors):
-        super().__init__()
-        self.num_objs = num_objs
-        self.num_colors = num_colors
-
-    def forward(self, x, r, v):
-        """
-        x: current one-hot colors of all objects; shape (1, num_colors * num_objects)
-        r: intervened object; int
-        v: a child object the intervened object; int
-        return: next one-hot color of the child object; shape (1, num_colors)
-        """
-        colorid_v = x[0, v * self.num_colors: (v + 1) * self.num_colors].argmax()  # one-hot color to index
-        colorid_r = x[0, r * self.num_colors: (r + 1) * self.num_colors].argmax()
-
-        # state transition of a variable when the action node of its parent variable is intervened
-        # colorid_v = (colorid_v + colorid_r) % self.num_colors
-        colorid_v = (colorid_v + 1) % self.num_colors
-        # colorid_v = colorid_v % self.num_colors
-
-        color_v = torch.zeros(self.num_colors)
-        color_v[colorid_v] = 1  # color index to one-hot
-
-        return color_v
-
-
 @dataclass
 class Object:
     pos: Coord
@@ -333,8 +306,6 @@ class Chemical(gym.Env):
         self.num_target_interventions = chemical_env_params.num_target_interventions
         self.max_steps = chemical_env_params.max_steps
 
-        self.mask = None
-
         self.colors, _ = get_colors_and_weights(cmap='Set1', num_colors=self.num_colors)
         self.object_to_color = [torch.zeros(self.num_colors, device=device) for _ in range(self.num_objects)]
 
@@ -356,9 +327,6 @@ class Chemical(gym.Env):
         self.partial_act_dims = [i for i in range(self.num_objects) if i not in self.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
 
-        # All objects have the same MLP structure and paramters but with different inputs.
-        self.mlps = [MLP(self.num_objects, self.num_colors).to(device) for _ in range(self.num_objects)]
-
         self.set_graph(chemical_env_params.g)
 
         # If True, then check for collisions and don't allow two
@@ -370,15 +338,26 @@ class Chemical(gym.Env):
 
         self.reset()
 
+    def sce(self, s, idx):
+        """structural causal equations of environment causal transition
+        x: current one-hot colors of all objects; shape [(num_colors)] * num_objects
+        r: current intervened object index; int
+        return: next one-hot color of the all objects
+        """
+        s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
+        a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
+
+        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix + torch.eye(self.num_objects), s_t) + a_t,
+                          self.num_colors)  # one-step transition
+        s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
+        return s_t1
+
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
     def load_save_information(self, save):
         self.adjacency_matrix = save['graph']
-        for i in range(self.num_objects):
-            self.mlps[i].load_state_dict(save['mlp' + str(i)])
-        self.generate_masks()
         self.reset()
 
     def set_graph(self, g):
@@ -390,14 +369,11 @@ class Chemical(gym.Env):
         self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
         print(self.adjacency_matrix)
-        self.generate_masks()
         self.reset()
 
     def get_save_information(self):
         save = {}
         save['graph'] = self.adjacency_matrix
-        for i in range(self.num_objects):
-            save['mlp' + str(i)] = self.mlps[i].state_dict()
         return save
 
     def render_grid(self):
@@ -502,7 +478,7 @@ class Chemical(gym.Env):
             state["image"], state["goal_image"] = (image * 255).astype(np.uint8), (goal_image * 255).astype(np.uint8)
         partial_obs_keys = [list(state.keys())[i] for i in self.partial_obs_dims]
         partial_state = {key: state[key] for key in partial_obs_keys}
-        return partial_state
+        return partial_state, state
 
     def observation_spec(self):
         return self.get_state()
@@ -521,40 +497,27 @@ class Chemical(gym.Env):
         partial_state = {key: state[key] for key in partial_obs_keys}
         return partial_state, state
 
-    def generate_masks(self):
-        """Generate masks so that each variable only receives input from its parents"""
-        mask = self.adjacency_matrix.unsqueeze(-1)
-        mask = mask.repeat(1, 1, self.num_colors)
-        self.mask = mask.view(self.adjacency_matrix.size(0), -1)
-
     def generate_target(self, num_steps=3):
         self.actions_to_target = []
         for i in range(num_steps):
             intervention_id = self.np_random.choice(self.partial_act_dims)
             self.actions_to_target.append(intervention_id)
             ########################################################
-            print(f"ACTIONS_TO_TARGET AT STEP {i}")
-            print(self.actions_to_target[-1])
+            # print(f"ACTIONS_TO_TARGET AT STEP {i}")
+            # print(self.actions_to_target[-1])
             ########################################################
 
-            self.sample_variables_target(intervention_id)
+            self.object_to_color_target = self.sce(self.object_to_color_target, intervention_id)
             ########################################################
-            print(f"OBJECT_TO_COLOR_TARGET AT STEP {i}")
-            print(self.object_to_color_target, '\n')
+            # print(f"OBJECT_TO_COLOR_TARGET AT STEP {i}")
+            # print(self.object_to_color_target, '\n')
             ########################################################
 
-        matches = 0.
-        for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
-            if i not in self.match_type:
-                continue
-            if (c1 == c2).all():
-                matches += 1
+    def reset(self, seed=None, options=None):
+        # Seed self.np_random
+        super().reset(seed=seed)
 
-        num_needed_match = len(self.match_type)
-        if self.dense_reward:
-            self.reward_baseline = matches / num_needed_match
-
-    def reset(self, num_steps=3):
+        num_steps = self.num_target_interventions
         self.cur_step = 0
 
         self.object_to_color = [torch.zeros(self.num_colors, device=self.device) for _ in range(self.num_objects)]
@@ -595,14 +558,14 @@ class Chemical(gym.Env):
         for i in range(len(self.object_to_color)):
             self.object_to_color_target[i][to_numpy(self.object_to_color[i].argmax())] = 1
         ########################################################
-        print('OBJECT_TO_COLOR_TARGET INITIAL')
-        print(self.object_to_color_target)
+        # print('OBJECT_TO_COLOR_TARGET INITIAL')
+        # print(self.object_to_color_target)
         ########################################################
 
         self.generate_target(num_steps)
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
 
-        state = self.get_state()
+        state = self.get_state()[0]
         info = {}
 
         return state, info
@@ -625,40 +588,8 @@ class Chemical(gym.Env):
 
         return True
 
-    def is_reachable(self, idx, reached):
-        for r in reached:
-            if self.adjacency_matrix[idx, r] == 1:
-                return True
-        return False
-
-    def sample_variables(self, idx, do_everything=False):
-        """
-        idx: variable at which intervention is performed
-        """
-        reached = [idx]
-        for v in range(self.num_objects):
-            if do_everything or self.is_reachable(v, reached):
-                inp = torch.cat(self.object_to_color, dim=0).unsqueeze(0)
-                mask = self.mask[v].unsqueeze(0)
-
-                out = self.mlps[v](inp, reached[0], v)
-                self.object_to_color[v] = out.squeeze(0)
-
-    def sample_variables_target(self, idx, do_everything=False):
-        """
-        idx: variable at which intervention is performed
-        """
-        reached = [idx]
-        for v in range(self.num_objects):
-            if do_everything or self.is_reachable(v, reached):
-                inp = torch.cat(self.object_to_color_target, dim=0).unsqueeze(0)
-                mask = self.mask[v].unsqueeze(0)
-
-                out = self.mlps[v](inp, reached[0], v)
-                self.object_to_color_target[v] = out.squeeze(0)
-
     def translate(self, obj_id):
-        self.sample_variables(obj_id)
+        self.object_to_color = self.sce(self.object_to_color, obj_id)
         for idx, obj in self.objects.items():
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
@@ -691,28 +622,27 @@ class Chemical(gym.Env):
 
         num_needed_match = len(self.match_type)
         if self.dense_reward:
-            reward = matches / num_needed_match - self.reward_baseline
-            self.reward_baseline = matches / num_needed_match
+            reward = matches / num_needed_match
         else:
             reward = float(matches == num_needed_match)
         info = {"success": matches == num_needed_match}
 
         self.cur_step += 1
 
-        state = self.get_state()
+        state = self.get_state()[0]
         terminated = matches == num_needed_match
         truncated = self.cur_step >= self.max_steps
 
         ########################################################
-        print("ACTION ENV")
-        print(action)
-        print(partial_action)
-        print("NEXT OBS ENV")
-        print(self.object_to_color)
-        print(state)
-        print("REWARD ENV")
-        print(reward, truncated, info)
-        print("\n")
+        # print("ACTION ENV")
+        # print(action)
+        # print(partial_action)
+        # print("NEXT OBS ENV")
+        # print(self.object_to_color)
+        # print(state)
+        # print("REWARD ENV")
+        # print(reward, truncated, info)
+        # print("\n")
         ########################################################
 
         return state, reward, terminated, truncated, info

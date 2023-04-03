@@ -116,7 +116,8 @@ def preprocess_obs(obs, params):
 
     obs_spec = getattr(params, "obs_spec", obs)
     new_obs = {}
-    for k in params.obs_keys + params.goal_keys:
+    obs_keys = params.obs_keys_f if len(obs) == 2 * len(params.obs_keys_f) else params.obs_keys
+    for k in obs_keys + params.goal_keys:
         val = obs[k]
         val_spec = obs_spec[k]
         if val_spec.ndim == 1:
@@ -156,7 +157,8 @@ def update_obs_act_spec(env, params):
         params.continuous_state = True
 
     params.action_dim = env.action_dim
-    params.obs_spec = obs_spec = preprocess_obs(env.observation_spec(), params)
+    params.obs_spec_f = obs_spec_f = preprocess_obs(env.observation_spec()[1], params)
+    params.obs_spec = obs_spec = preprocess_obs(env.observation_spec()[0], params)
 
     if params.continuous_factor:
         params.obs_dims = None

@@ -49,8 +49,8 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 10,
-            "num_target_interventions": 5,
+            "max_steps": 50,
+            "num_target_interventions": 3,
             "g": "chain5",
             "match_type": "all",
             "dense_reward": true
@@ -64,19 +64,19 @@
         "load_policy": "",
         "load_replay_buffer": "",
         "total_steps": 50000,
-        "init_steps": 30,
+        "init_steps": 100,
         "collect_env_step": true,
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
-        "plot_freq": 10000,
+        "plot_freq": 5000,
         "replay_buffer_params": {
             "capacity": 500000,
             "max_sample_time": 128,
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 4
+            "stack_num": 5
         }
     },
     "encoder_params": {
@@ -88,7 +88,7 @@
     },
     "inference_params": {
         "n_pred_step": 1,
-        "batch_size": 2,
+        "batch_size": 64,
         "lr": 1e-4,
         "train_prop": 0.9,
         "residual": true,
@@ -103,7 +103,7 @@
             "eval_tau": 0.999,
             "eval_freq": 10,
             "eval_steps": 1,
-            "eval_batch_size": 3,
+            "eval_batch_size": 32,
             "CMI_threshold": 0.02
         },
         "nps_params": {
