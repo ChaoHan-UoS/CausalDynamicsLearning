@@ -195,21 +195,7 @@ def train(params):
                     action = action_policy.act(obs)
 
             next_obs, env_reward, terminated, truncated, info = env.step(action)
-            # print("ACTION")
-            # print(action)
-            # print("NEXT OBS")
-            # print(next_obs)
-            # print("REWARD")
-            # print(env_reward, info)
-            # print("TERMINATED/TRUNCATED")
-            # print(terminated, truncated)
-            # print("\n")
-
             done = truncated or terminated
-            # print(action)
-            # sys.exit()
-            # print(next_obs)
-            # print(env_reward, done, info, '\n')
 
             if is_task_learning and not is_vecenv:
                 success = success or info["success"]
@@ -220,11 +206,17 @@ def train(params):
 
             # save env transitions in the replay buffer
             obs = preprocess_obs(obs, params)  # filter unused obs keys
+            ################## mask the obs patially observable ##################
+            hidden_obj_id = [2]
+            partial_obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_obj_id]
+            obs = {key: obs[key] for key in partial_obs_keys}
+            ################## mask the obs patially observable ##################
             obs['act'] = np.array([action])
             obs['episode_step'] = np.array([episode_step])
+
             next_obs = preprocess_obs(next_obs, params)
-            next_obs['act'] = np.array([0])
-            next_obs['episode_step'] = np.array([episode_step + 1])
+            # next_obs['act'] = np.array([0])
+            # next_obs['episode_step'] = np.array([episode_step + 1])
 
             # print(f"EPISODE STEP: {episode_step}")
             # if episode_step >= replay_buffer_params.stack_num:
@@ -240,10 +232,10 @@ def train(params):
                           info=info,
                           )
                 )
-                if step > 0:
-                    temp = buffer_train.obs_next[step - 1]
-                    temp.act = obs['act']
-                    buffer_train.obs_next[step - 1] = temp
+                # if step > 0:
+                #     temp = buffer_train.obs_next[step - 1]
+                #     temp.act = obs['act']
+                #     buffer_train.obs_next[step - 1] = temp
             else:
                 buffer_eval_cmi.add(
                     Batch(obs=obs,
@@ -255,10 +247,10 @@ def train(params):
                           info=info,
                           )
                 )
-                if step > 0:
-                    temp = buffer_eval_cmi.obs_next[step - 1]
-                    temp.act = obs['act']
-                    buffer_eval_cmi.obs_next[step - 1] = temp
+                # if step > 0:
+                #     temp = buffer_eval_cmi.obs_next[step - 1]
+                #     temp.act = obs['act']
+                #     buffer_eval_cmi.obs_next[step - 1] = temp
 
             # ppo uses its own buffer
             if rl_algo == "hippo" and not is_init_stage:
@@ -280,10 +272,6 @@ def train(params):
                 next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
                 for key, tensor in next_obses_batch.items():
                     next_obses_batch[key] = tensor.unsqueeze(-1)
-                # print(obs_batch)
-                # print(actions_batch)
-                # print(next_obses_batch)
-                # sys.exit()
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch)
                 loss_details["inference"].append(loss_detail)
 

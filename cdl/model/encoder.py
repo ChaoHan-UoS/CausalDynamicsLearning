@@ -31,6 +31,7 @@ class IdentityEncoder(nn.Module):
         self.to(params.device)
 
     def forward(self, obs, detach=False):
+        obs = obs[:,-1]
         if self.continuous_state:
             # overwrite some observations for out-of-distribution evaluation
             if not getattr(self, "manipulation_train", True):
@@ -51,6 +52,9 @@ class IdentityEncoder(nn.Module):
                 assert self.params.env_params.chemical_env_params.continuous_pos
                 test_scale = self.chemical_test_scale
                 obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
+
+            print('True obj 2')
+            print(obs[2][0], '\n')
             return obs
 
 class RecurrentEncoder(Recurrent):
@@ -67,6 +71,7 @@ class RecurrentEncoder(Recurrent):
         ####################### dset #######################
         self.keys_dset = ['obj0', 'obj1', 'obj3', 'obj4']
         self.keys_remapped_dset = self.keys_dset + ['act', 'episode_step']
+        ####################### dset #######################
         self.keys_remapped = self.keys + ['act', 'episode_step']
         self.feature_dim_p = np.sum([len(params.obs_spec[key]) for key in self.keys])
         self.continuous_state = params.continuous_state
@@ -105,20 +110,22 @@ class RecurrentEncoder(Recurrent):
             obs.episode_step -= 1
             # print("EPISODE_STEP_after")
             # print(obs.episode_step)
-            obs_forward = [obs_k_i
-                   for k in self.keys_remapped
-                   for obs_k_i in torch.unbind(obs[k], dim=-1)]
-            obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-                   for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
-            obs_obs_forward = torch.stack(obs_forward[:-2], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
-            obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])
+            # obs_forward = [obs_k_i
+            #        for k in self.keys_remapped
+            #        for obs_k_i in torch.unbind(obs[k], dim=-1)]
+            # obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
+            #        for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
+            # obs_obs_forward = torch.stack(obs_forward[:-2], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
+            # obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])
 
             obs = [obs_k_i
                    for k in self.keys_remapped_dset
                    for obs_k_i in torch.unbind(obs[k], dim=-1)]
             obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
                    for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim_remapped_p_dset)]
-            obs_obs = torch.stack(obs[:-2], dim=0)
+            obs_obs_forward = obs_obs = torch.stack(obs[:-2], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
+            obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])
+
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
                 obs_obs = obs_obs.permute(1, 2, 0, 3, 4)  # shape (bs, stack_num, num_observed_objects, 1, num_colors)
@@ -140,7 +147,8 @@ class RecurrentEncoder(Recurrent):
                 assert self.params.env_params.chemical_env_params.continuous_pos
                 test_scale = self.chemical_test_scale
                 obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
-            obs = obs.reshape(self.num_hidden_objects, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
+            # obs = obs.reshape(self.num_hidden_objects, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
+            obs = obs.reshape(1, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
             # obs = F.softmax(obs, dim=-1)
             if self.training:
                 obs = F.gumbel_softmax(obs, hard=True)
@@ -148,11 +156,12 @@ class RecurrentEncoder(Recurrent):
                 obs = F.one_hot(torch.argmax(obs, dim=-1), obs.size(-1)).float()
             if obs_obs_dims == 5:
                 obs = obs.unsqueeze(dim=-2)
-            # print('Recovered obj 2')
-            # print(obs[:, 0, :], '\n')
+            print('Recovered obj 2')
+            print(obs[:, 0])
             obs = obs_obs_forward[:2] + torch.unbind(obs) + obs_obs_forward[2:]  # concatenate RNN's output and FNN's
 
             return obs
+
 
 
 def make_encoder(params):
@@ -165,16 +174,17 @@ def make_encoder(params):
         ####################### dset #######################
         obs_shape = 4 * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape = len(chemical_env_params.hidden_objects_ind) * chemical_env_params.num_colors  # recover the hidden objects
+        # logit_shape = len(chemical_env_params.hidden_objects_ind) * chemical_env_params.num_colors  # recover the hidden objects
+        logit_shape = 1 * chemical_env_params.num_colors  # recover the hidden objects
         device = params.device
         hidden_layer_size = recurrent_enc_params.hidden_layer_size
-        encoded_obs = RecurrentEncoder(params, layer_num, obs_shape, logit_shape, device, hidden_layer_size)
+        encoder = RecurrentEncoder(params, layer_num, obs_shape, logit_shape, device, hidden_layer_size)
         # print('\nTrainable parameters of the recurrent encoder')
         # for name, value in encoded_obs.named_parameters():
         #     print(name, value.shape)
     elif encoder_type == "identity":
-        encoded_obs = IdentityEncoder(params)
+        encoder = IdentityEncoder(params)
     else:
         raise ValueError("Unknown encoder_type: {}".format(encoder_type))
 
-    return encoded_obs
+    return encoder
