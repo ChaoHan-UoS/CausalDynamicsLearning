@@ -5,6 +5,8 @@ import numpy as np
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
+import torch.nn.functional as F
 
 np.set_printoptions(precision=3, suppress=True)
 torch.set_printoptions(precision=3, sci_mode=False)
@@ -32,6 +34,9 @@ from tianshou.data import to_torch
 
 from env.chemical_env import Chemical
 
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('TkAgg')
 
 def train(params):
     device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
@@ -53,11 +58,16 @@ def train(params):
     hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
     num_objects = params.env_params.chemical_env_params.num_objects
     params.obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_objects_ind]
+    hidden_obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i in hidden_objects_ind]
 
     # init model
     update_obs_act_spec(env, params)
     encoder = make_encoder(params)
     decoder = None
+
+    supervised_encoder = True
+    criterion = nn.NLLLoss()
+    optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -120,8 +130,7 @@ def train(params):
 
     # init episode variables
     episode_num = 0
-    obs, _ = env.reset()
-    # print(obs)
+    (_, obs), _ = env.reset()  # full obs that will be masked before saving in buffer
     scripted_policy.reset(obs)
 
     done = np.zeros(num_env, dtype=bool) if is_vecenv else False
@@ -131,9 +140,13 @@ def train(params):
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
 
+    # plot loss curve for supervised encoder
+    losses = []
+    steps = []
+
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
-        print("{}/{}, init_stage: {}".format(step + 1, total_steps, is_init_stage))
+        # print("{}/{}, init_stage: {}".format(step + 1, total_steps, is_init_stage))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -157,7 +170,7 @@ def train(params):
                     episode_step[i] = 0
                     episode_num += 1
             elif not is_vecenv and done:
-                obs, _ = env.reset()
+                (_, obs), _ = env.reset()
                 if rl_algo == "hippo":
                     policy.reset()
                 scripted_policy.reset(obs)
@@ -194,7 +207,7 @@ def train(params):
                     action_policy = scripted_policy if is_demo else policy
                     action = action_policy.act(obs)
 
-            next_obs, env_reward, terminated, truncated, info = env.step(action)
+            (_, next_obs), env_reward, terminated, truncated, info = env.step(action)  # full next_obs as labels
             done = truncated or terminated
 
             if is_task_learning and not is_vecenv:
@@ -207,9 +220,8 @@ def train(params):
             # save env transitions in the replay buffer
             obs = preprocess_obs(obs, params)  # filter unused obs keys
             ################## mask the obs patially observable ##################
-            hidden_obj_id = [2]
-            partial_obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_obj_id]
-            obs = {key: obs[key] for key in partial_obs_keys}
+            hidden_obs = {key: obs[key] for key in hidden_obs_keys}
+            obs = {key: obs[key] for key in params.obs_keys}
             ################## mask the obs patially observable ##################
             obs['act'] = np.array([action])
             obs['episode_step'] = np.array([episode_step])
@@ -229,7 +241,7 @@ def train(params):
                           terminated=terminated,
                           truncated=truncated,
                           obs_next=next_obs,
-                          info=info,
+                          info=hidden_obs,
                           )
                 )
                 # if step > 0:
@@ -244,7 +256,7 @@ def train(params):
                           terminated=terminated,
                           truncated=truncated,
                           obs_next=next_obs,
-                          info=info,
+                          info=hidden_obs,
                           )
                 )
                 # if step > 0:
@@ -261,6 +273,29 @@ def train(params):
         # training
         if is_init_stage:
             continue
+
+        if supervised_encoder:
+            batch_data, _ = buffer_train.sample(inference_params.batch_size)
+            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+            label_batch = to_torch(batch_data.info, torch.int64, params.device)
+            label_batch = label_batch[:, -1]
+            label_batch = label_batch[hidden_obs_keys[0]].squeeze(-1)
+
+            # Forward pass
+            obs_softmax = encoder(obs_batch)[0]
+            obs_log_prob = torch.log(obs_softmax)
+            loss = criterion(obs_log_prob, label_batch)
+
+            # Backward and optimize
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if (step + 1) % 100 == 0:
+                print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
+
+            losses.append(loss.item())
+            steps.append(step + 1)
 
         if inference_gradient_steps > 0:
             inference.train()
@@ -333,6 +368,28 @@ def train(params):
                 inference.save(os.path.join(model_dir, "inference_{}".format(step + 1)))
             if policy_gradient_steps > 0:
                 policy.save(os.path.join(model_dir, "policy_{}".format(step + 1)))
+
+    if supervised_encoder:
+        plt.plot(steps, losses)
+        plt.title("Training Loss")
+        plt.xlabel("Step")
+        plt.ylabel("Loss")
+        plt.show()
+
+        with torch.no_grad():
+            batch_data, _ = buffer_eval_cmi.sample(0)
+            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+            label_batch = to_torch(batch_data.info, torch.int64, params.device)
+            label_batch = label_batch[:, -1]
+            label_batch = label_batch[hidden_obs_keys[0]].squeeze(-1)
+
+            obs_softmax = encoder(obs_batch)[0]
+            _, pred_batch = torch.max(obs_softmax, 1)
+            n_samples = label_batch.size(0)
+            n_correct = (pred_batch == label_batch).sum().item()
+
+            acc = 100.0 * n_correct / n_samples
+            print(f'Accuracy on {n_samples} labels: {acc}%')
 
 
 if __name__ == "__main__":

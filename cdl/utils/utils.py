@@ -114,9 +114,13 @@ def preprocess_obs(obs, params):
             ndarray = ndarray.astype(type)
         return ndarray
 
-    obs_spec = getattr(params, "obs_spec", obs)
     new_obs = {}
-    obs_keys = params.obs_keys_f if len(obs) == 2 * len(params.obs_keys_f) else params.obs_keys
+    if len(obs) % len(params.obs_keys_f) == 0:
+        obs_keys = params.obs_keys_f
+        obs_spec = getattr(params, "obs_spec_f", obs)
+    else:
+        obs_keys = params.obs_keys
+        obs_spec = getattr(params, "obs_spec", obs)
     for k in obs_keys + params.goal_keys:
         val = obs[k]
         val_spec = obs_spec[k]

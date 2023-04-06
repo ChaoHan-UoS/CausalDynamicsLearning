@@ -20,18 +20,18 @@ class IdentityEncoder(nn.Module):
         super().__init__()
 
         self.params = params
-        self.keys = [key for key in params.obs_keys if params.obs_spec[key].ndim == 1]
-        self.feature_dim = np.sum([len(params.obs_spec[key]) for key in self.keys])
+        self.keys = [key for key in params.obs_keys_f if params.obs_spec_f[key].ndim == 1]
+        self.feature_dim = np.sum([len(params.obs_spec_f[key]) for key in self.keys])
 
         self.continuous_state = params.continuous_state
         self.feature_inner_dim = None
         if not self.continuous_state:
-            self.feature_inner_dim = np.concatenate([params.obs_dims[key] for key in self.keys])
+            self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in self.keys])
 
         self.to(params.device)
 
     def forward(self, obs, detach=False):
-        obs = obs[:,-1]
+        obs = obs[:, -1]
         if self.continuous_state:
             # overwrite some observations for out-of-distribution evaluation
             if not getattr(self, "manipulation_train", True):
@@ -53,8 +53,8 @@ class IdentityEncoder(nn.Module):
                 test_scale = self.chemical_test_scale
                 obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
 
-            print('True obj 2')
-            print(obs[2][0], '\n')
+            # print('True obj 2')
+            # print(obs[2][0], '\n')
             return obs
 
 class RecurrentEncoder(Recurrent):
@@ -151,14 +151,15 @@ class RecurrentEncoder(Recurrent):
             obs = obs.reshape(1, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
             # obs = F.softmax(obs, dim=-1)
             if self.training:
-                obs = F.gumbel_softmax(obs, hard=True)
+                obs = F.gumbel_softmax(obs, hard=False)
             else:
                 obs = F.one_hot(torch.argmax(obs, dim=-1), obs.size(-1)).float()
             if obs_obs_dims == 5:
                 obs = obs.unsqueeze(dim=-2)
-            print('Recovered obj 2')
-            print(obs[:, 0])
-            obs = obs_obs_forward[:2] + torch.unbind(obs) + obs_obs_forward[2:]  # concatenate RNN's output and FNN's
+            # print('Recovered obj 2')
+            # print(obs[:, 0])
+            # obs = obs_obs_forward[:2] + torch.unbind(obs) + obs_obs_forward[2:]  # concatenate RNN's output and FNN's
+            obs = torch.unbind(obs)
 
             return obs
 

@@ -565,7 +565,7 @@ class Chemical(gym.Env):
         self.generate_target(num_steps)
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
 
-        state = self.get_state()[0]
+        state = self.get_state()
         info = {}
 
         return state, info
@@ -629,7 +629,7 @@ class Chemical(gym.Env):
 
         self.cur_step += 1
 
-        state = self.get_state()[0]
+        state = self.get_state()
         terminated = matches == num_needed_match
         truncated = self.cur_step >= self.max_steps
 

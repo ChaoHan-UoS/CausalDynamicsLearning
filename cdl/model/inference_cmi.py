@@ -29,7 +29,7 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
-        self.encoder_iden = IdentityEncoder(params)
+        # self.encoder_iden = IdentityEncoder(params)
 
         # print('\nTrainable parameters within InferenceCMI class')
         # for name, value in self.named_parameters():

@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [],
+            "hidden_objects_ind": [2],
             "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 5,
@@ -63,10 +63,10 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 50000,
+        "total_steps": 10000,
         "init_steps": 500,
         "collect_env_step": true,
-        "inference_gradient_steps": 1,
+        "inference_gradient_steps": 0,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
         "plot_freq": 5000,
@@ -76,7 +76,7 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 10
+            "stack_num": 5
         }
     },
     "encoder_params": {
