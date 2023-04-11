@@ -109,11 +109,12 @@ def train(params):
         buffer_train = ReplayBuffer(
             size=replay_buffer_params.capacity,
             stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
-            # save_only_last_obs=True
+            sample_avail=True,
         )
         buffer_eval_cmi = ReplayBuffer(
             size=replay_buffer_params.capacity,
             stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
+            sample_avail=True,
         )
 
     # init saving
@@ -224,7 +225,7 @@ def train(params):
             obs = {key: obs[key] for key in params.obs_keys}
             ################## mask the obs patially observable ##################
             obs['act'] = np.array([action])
-            obs['episode_step'] = np.array([episode_step])
+            # obs['episode_step'] = np.array([episode_step])
 
             next_obs = preprocess_obs(next_obs, params)
             # next_obs['act'] = np.array([0])
@@ -377,7 +378,7 @@ def train(params):
         plt.show()
 
         with torch.no_grad():
-            batch_data, _ = buffer_eval_cmi.sample(0)
+            batch_data, _ = buffer_train.sample(0)
             obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
             label_batch = to_torch(batch_data.info, torch.int64, params.device)
             label_batch = label_batch[:, -1]
@@ -389,7 +390,7 @@ def train(params):
             n_correct = (pred_batch == label_batch).sum().item()
 
             acc = 100.0 * n_correct / n_samples
-            print(f'Accuracy on {n_samples} labels: {acc}%')
+            print(f'Testing accuracy: {n_correct} / {n_samples} = {acc}%')
 
 
 if __name__ == "__main__":
