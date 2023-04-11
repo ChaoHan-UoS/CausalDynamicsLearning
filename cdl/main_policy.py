@@ -378,7 +378,7 @@ def train(params):
         plt.show()
 
         with torch.no_grad():
-            batch_data, _ = buffer_train.sample(0)
+            batch_data, _ = buffer_eval_cmi.sample(0)
             obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
             label_batch = to_torch(batch_data.info, torch.int64, params.device)
             label_batch = label_batch[:, -1]
