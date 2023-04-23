@@ -699,8 +699,8 @@ class InferenceCMI(Inference):
         mask = self.get_training_mask(bs)                           # (bs, feature_dim, feature_dim + 1)
 
         feature = self.encoder(obs)
-        # next_feature = self.encoder(next_obses)
-        next_feature = self.encoder_iden(next_obses)
+        next_feature = self.encoder(next_obses)
+        # next_feature = self.encoder_iden(next_obses)
         pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
 
         # prediction loss in the state / latent space, (bs, n_pred_step)
@@ -733,8 +733,8 @@ class InferenceCMI(Inference):
         masked_pred_losses = []
         with torch.no_grad():
             feature = self.encoder(obs)
-            # next_feature = self.encoder(next_obses)
-            next_feature = self.encoder_iden(next_obses)
+            next_feature = self.encoder(next_obses)
+            # next_feature = self.encoder_iden(next_obses)
             for i in range(feature_dim):
                 mask = self.get_eval_mask(bs, i)
                 if i == 0:
@@ -924,6 +924,7 @@ class InferenceCMI(Inference):
 
     def train(self, training=True):
         self.training = training
+        # self.encoder.eval()  # Freeze encoder's parameters
 
     def eval(self):
         self.train(training=False)

@@ -1,6 +1,8 @@
 import os
 import sys
 
+os.environ['JUPYTER_PLATFORM_DIRS'] = '1'
+
 import numpy as np
 
 import torch
@@ -36,7 +38,9 @@ from env.chemical_env import Chemical
 
 import matplotlib.pyplot as plt
 import matplotlib
+
 matplotlib.use('TkAgg')
+
 
 def train(params):
     device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
@@ -58,14 +62,13 @@ def train(params):
     hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
     num_objects = params.env_params.chemical_env_params.num_objects
     params.obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_objects_ind]
-    hidden_obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i in hidden_objects_ind]
+    hidden_state_keys = [params.obs_keys_f[i] for i in range(num_objects) if i in hidden_objects_ind]
 
     # init model
     update_obs_act_spec(env, params)
     encoder = make_encoder(params)
     decoder = None
 
-    supervised_encoder = True
     criterion = nn.NLLLoss()
     optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
 
@@ -125,13 +128,15 @@ def train(params):
     start_step = get_start_step_from_model_loading(params)
     total_steps = training_params.total_steps
     collect_env_step = training_params.collect_env_step
+    supervised_encoder = training_params.supervised_encoder
+    supervised_encoder_plot = training_params.supervised_encoder_plot
     inference_gradient_steps = training_params.inference_gradient_steps
     policy_gradient_steps = training_params.policy_gradient_steps
     train_prop = inference_params.train_prop
 
     # init episode variables
     episode_num = 0
-    (_, obs), _ = env.reset()  # full obs that will be masked before saving in buffer
+    (obs, obs_f), info = env.reset()  # full obs that will be masked before saving in buffer
     scripted_policy.reset(obs)
 
     done = np.zeros(num_env, dtype=bool) if is_vecenv else False
@@ -147,7 +152,9 @@ def train(params):
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
-        # print("{}/{}, init_stage: {}".format(step + 1, total_steps, is_init_stage))
+        is_enc_pretrain = 0 <= step - training_params.init_steps < training_params.enc_pretrain_steps
+        print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
+                                                                      is_enc_pretrain))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -208,7 +215,7 @@ def train(params):
                     action_policy = scripted_policy if is_demo else policy
                     action = action_policy.act(obs)
 
-            (_, next_obs), env_reward, terminated, truncated, info = env.step(action)  # full next_obs as labels
+            (next_obs, next_obs_f), env_reward, terminated, truncated, info = env.step(action)
             done = truncated or terminated
 
             if is_task_learning and not is_vecenv:
@@ -219,20 +226,18 @@ def train(params):
             episode_step += 1
 
             # save env transitions in the replay buffer
-            obs = preprocess_obs(obs, params)  # filter unused obs keys
-            ################## mask the obs patially observable ##################
-            hidden_obs = {key: obs[key] for key in hidden_obs_keys}
-            obs = {key: obs[key] for key in params.obs_keys}
-            ################## mask the obs patially observable ##################
+            if episode_step == 1:
+                obs_f = preprocess_obs(obs_f, params)  # filter out target obs keys
+                obs = preprocess_obs(obs, params)
+            hidden_state = {key: obs_f[key] for key in hidden_state_keys}
+            info.update(hidden_state)
             obs['act'] = np.array([action])
-            # obs['episode_step'] = np.array([episode_step])
 
+            next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs = preprocess_obs(next_obs, params)
-            # next_obs['act'] = np.array([0])
-            # next_obs['episode_step'] = np.array([episode_step + 1])
+            next_obs['act'] = np.zeros(1)
 
             # print(f"EPISODE STEP: {episode_step}")
-            # if episode_step >= replay_buffer_params.stack_num:
             # is_train: if the transition is training data or evaluation data for inference_cmi
             if is_train:
                 buffer_train.add(
@@ -242,13 +247,13 @@ def train(params):
                           terminated=terminated,
                           truncated=truncated,
                           obs_next=next_obs,
-                          info=hidden_obs,
+                          info=info,
                           )
                 )
-                # if step > 0:
-                #     temp = buffer_train.obs_next[step - 1]
-                #     temp.act = obs['act']
-                #     buffer_train.obs_next[step - 1] = temp
+                if step > 0:
+                    temp = buffer_train.obs_next[step - 1]
+                    temp.act = obs['act']
+                    buffer_train.obs_next[step - 1] = temp
             else:
                 buffer_eval_cmi.add(
                     Batch(obs=obs,
@@ -257,19 +262,20 @@ def train(params):
                           terminated=terminated,
                           truncated=truncated,
                           obs_next=next_obs,
-                          info=hidden_obs,
+                          info=info,
                           )
                 )
-                # if step > 0:
-                #     temp = buffer_eval_cmi.obs_next[step - 1]
-                #     temp.act = obs['act']
-                #     buffer_eval_cmi.obs_next[step - 1] = temp
+                if step > 0:
+                    temp = buffer_eval_cmi.obs_next[step - 1]
+                    temp.act = obs['act']
+                    buffer_eval_cmi.obs_next[step - 1] = temp
 
             # ppo uses its own buffer
             if rl_algo == "hippo" and not is_init_stage:
                 policy.update_trajectory_list(obs, action, done, next_obs, info)
 
             obs = next_obs
+            obs_f = next_obs_f
 
         # training
         if is_init_stage:
@@ -279,11 +285,11 @@ def train(params):
             batch_data, _ = buffer_train.sample(inference_params.batch_size)
             obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
             label_batch = to_torch(batch_data.info, torch.int64, params.device)
-            label_batch = label_batch[:, -1]
-            label_batch = label_batch[hidden_obs_keys[0]].squeeze(-1)
+            label_batch = label_batch[:, -1]  # keep only the current label_batch
+            label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
 
             # Forward pass
-            obs_softmax = encoder(obs_batch)[0]
+            obs_softmax = encoder(obs_batch)[hidden_objects_ind[0]]
             obs_log_prob = torch.log(obs_softmax)
             loss = criterion(obs_log_prob, label_batch)
 
@@ -294,9 +300,16 @@ def train(params):
 
             if (step + 1) % 100 == 0:
                 print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
-
             losses.append(loss.item())
             steps.append(step + 1)
+
+            if is_enc_pretrain:
+                continue
+            supervised_encoder = False
+            encoder.eval()  # RNN in eval mode returns F.one_hot colors; its parameters are fixed
+            # print('Parameters in encoder (eval mode)')
+            # for name, value in encoder.named_parameters():
+            #     print(name, value)
 
         if inference_gradient_steps > 0:
             inference.train()
@@ -310,6 +323,9 @@ def train(params):
                     next_obses_batch[key] = tensor.unsqueeze(-1)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch)
                 loss_details["inference"].append(loss_detail)
+            # print('Parameters in inference (train mode)')
+            # for name, value in inference.named_parameters():
+            #     print(name, value)
 
             inference.eval()
             if (step + 1) % cmi_params.eval_freq == 0:
@@ -329,6 +345,9 @@ def train(params):
                     batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     loss_detail = inference.update(batch_data.obs, batch_data.act, batch_data.obs_next, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
+            # print('Parameters in inference (eval mode)')
+            # for name, value in inference.named_parameters():
+            #     print(name, value)
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()
@@ -370,7 +389,7 @@ def train(params):
             if policy_gradient_steps > 0:
                 policy.save(os.path.join(model_dir, "policy_{}".format(step + 1)))
 
-    if supervised_encoder:
+    if supervised_encoder_plot:
         plt.plot(steps, losses)
         plt.title("Training Loss")
         plt.xlabel("Step")
@@ -378,19 +397,19 @@ def train(params):
         plt.show()
 
         with torch.no_grad():
-            batch_data, _ = buffer_eval_cmi.sample(0)
+            batch_data, _ = buffer_eval_cmi.sample(2000)
             obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
             label_batch = to_torch(batch_data.info, torch.int64, params.device)
             label_batch = label_batch[:, -1]
-            label_batch = label_batch[hidden_obs_keys[0]].squeeze(-1)
+            label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
 
-            obs_softmax = encoder(obs_batch)[0]
+            obs_softmax = encoder(obs_batch)[hidden_objects_ind[0]]
             _, pred_batch = torch.max(obs_softmax, 1)
             n_samples = label_batch.size(0)
             n_correct = (pred_batch == label_batch).sum().item()
 
             acc = 100.0 * n_correct / n_samples
-            print(f'Testing accuracy: {n_correct} / {n_samples} = {acc}%')
+            print(f'Testing accuracy over {n_samples} samples: {n_correct} / {n_samples} = {acc}%')
 
 
 if __name__ == "__main__":

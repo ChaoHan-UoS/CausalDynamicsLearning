@@ -319,10 +319,10 @@ class Chemical(gym.Env):
 
         self.hidden_objects_ind = chemical_env_params.hidden_objects_ind
         self.hidden_targets_ind = chemical_env_params.hidden_targets_ind
-        full_obs_dims = range(2 * self.num_objects)
-        hidden_obs_dims = self.hidden_objects_ind + [self.num_objects + i for i in self.hidden_targets_ind]
-        self.partial_obs_dims = [i for i in full_obs_dims if i not in hidden_obs_dims]
-        assert 0 < len(self.partial_obs_dims) <= len(full_obs_dims)
+        self.full_obs_dims = range(2 * self.num_objects)
+        self.hidden_obs_dims = self.hidden_objects_ind + [self.num_objects + i for i in self.hidden_targets_ind]
+        self.partial_obs_dims = [i for i in self.full_obs_dims if i not in self.hidden_obs_dims]
+        assert 0 < len(self.partial_obs_dims) <= len(self.full_obs_dims)
 
         self.partial_act_dims = [i for i in range(self.num_objects) if i not in self.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
