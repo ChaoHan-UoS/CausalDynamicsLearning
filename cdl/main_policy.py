@@ -178,7 +178,7 @@ def train(params):
                     episode_step[i] = 0
                     episode_num += 1
             elif not is_vecenv and done:
-                (_, obs), _ = env.reset()
+                (obs, obs_f), _ = env.reset()
                 if rl_algo == "hippo":
                     policy.reset()
                 scripted_policy.reset(obs)
@@ -235,7 +235,7 @@ def train(params):
 
             next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs = preprocess_obs(next_obs, params)
-            next_obs['act'] = np.zeros(1)
+            next_obs_f['act'] = np.zeros(1)
 
             # print(f"EPISODE STEP: {episode_step}")
             # is_train: if the transition is training data or evaluation data for inference_cmi
@@ -246,7 +246,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,
                           info=info,
                           )
                 )
@@ -261,7 +261,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,
                           info=info,
                           )
                 )

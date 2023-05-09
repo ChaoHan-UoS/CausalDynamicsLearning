@@ -278,12 +278,12 @@ class Inference(nn.Module):
     def update(self, obses, actions, next_obses, eval=False):
         """
         Old:
-        :param obs: {obs_i_key: (bs, num_observation_steps, obs_i_shape)}
+        :param obses: {obs_i_key: (bs, num_observation_steps, obs_i_shape)}
         :param actions: (bs, num_pred_steps, 1)
         :param next_obses: {obs_i_key: (bs, num_pred_steps, obs_i_shape)}
 
         New:
-        :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
+        :param obses: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, 1, 1)
         :param next_obses: Batch(obs_i_key: (bs, stack_num, 1, obs_i_shape))
 
