@@ -151,9 +151,9 @@ class RecurrentEncoder(Recurrent):
             # print(obs[:, 0])
             obs = obs_obs_forward[:2] + torch.unbind(obs) + obs_obs_forward[2:]  # concatenate RNN's output and FNN's
             # obs = torch.unbind(obs)  # for supervised RNN
+            obs = list(obs)
 
             return obs
-
 
 
 def make_encoder(params):

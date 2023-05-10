@@ -107,7 +107,8 @@
             "eval_freq": 10,
             "eval_steps": 1,
             "eval_batch_size": 64,
-            "CMI_threshold": 0.02
+            "CMI_threshold": 0.02,
+            "hinge": 50.0
         },
         "nps_params": {
             "num_rule": 4,

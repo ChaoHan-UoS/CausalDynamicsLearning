@@ -701,14 +701,26 @@ class InferenceCMI(Inference):
         feature = self.encoder(obs)
         # next_feature = self.encoder(next_obses)
         next_feature = self.encoder_iden(next_obses)
+
+        # Create negative examples
+        perm = torch.randperm(bs)
+        feature_neg = [obs_i[perm] for obs_i in feature]
+        actions_neg = actions[perm]
+        mask_neg = mask[perm]
+
         pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
+        pred_next_dist_neg = self.forward_with_feature(feature_neg, actions_neg, mask_neg, forward_mode=forward_mode)
 
         # prediction loss in the state / latent space, (bs, n_pred_step)
         if not self.update_num % (eval_freq * inference_gradient_steps):
             pred_next_dist = pred_next_dist[:2]                     # only consider full and masked distributions when updating causal mask
+            pred_next_dist_neg = pred_next_dist_neg[:2]
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
+        pred_loss_neg, _ = self.prediction_loss_from_multi_dist(pred_next_dist_neg, next_feature)
+        pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
+        print(pred_loss_neg)
 
-        loss = pred_loss
+        loss = pred_loss + pred_loss_neg
 
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
