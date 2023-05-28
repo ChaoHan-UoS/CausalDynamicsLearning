@@ -153,7 +153,7 @@ class InferenceCMI(Inference):
 
     def reset_causal_graph_eval(self):
         self.mask_update_idx = 0
-        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim, device=self.device)
+        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim + 1, device=self.device)
 
     def extract_action_feature(self, action):
         """
@@ -569,7 +569,7 @@ class InferenceCMI(Inference):
         if len(forward_mode) == 1:
             return result_dists[0]
 
-        # a list of 3, each of [OneHotCategorical / Normal] * feature_dim, each of shape (bs, feature_i_dim)
+        # a list of 3, each of [OneHotCategorical / Normal] * feature_dim, each of shape (bs, n_pred_step, feature_i_dim)
         return result_dists
 
     def restore_batch_size_shape(self, dist, bs):
@@ -625,10 +625,9 @@ class InferenceCMI(Inference):
         feature_dim = self.feature_dim
 
         idxes = torch.full((batch_size, feature_dim), i, dtype=torch.int64, device=self.device)
-        self_mask = torch.arange(feature_dim, device=self.device)
+        # self_mask = torch.arange(feature_dim, device=self.device)
         # each state variable must depend on itself when predicting the next time step value
-        idxes[idxes >= self_mask] += 1
-
+        # idxes[idxes >= self_mask] += 1
         return self.get_mask_by_id(idxes)  # (bs, feature_dim, feature_dim + 1)
 
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
@@ -694,33 +693,35 @@ class InferenceCMI(Inference):
 
         eval_freq = self.cmi_params.eval_freq
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
-        forward_mode = ("full", "masked", "causal")
+        forward_mode = ("full", "masked")
+        # forward_mode = ("full", "masked", "causal")
         bs = actions.size(0)
         mask = self.get_training_mask(bs)                           # (bs, feature_dim, feature_dim + 1)
 
-        feature = self.encoder(obs)
-        # next_feature = self.encoder(next_obses)
-        next_feature = self.encoder_iden(next_obses)
+        feature, feature_target = self.encoder(obs)
+        next_feature, next_feature_target = self.encoder(next_obses)
+        # next_feature, next_feature_target = self.encoder_iden(next_obses)
 
-        # Create negative examples
-        perm = torch.randperm(bs)
-        feature_neg = [obs_i[perm] for obs_i in feature]
-        actions_neg = actions[perm]
-        mask_neg = mask[perm]
+        # # Create negative examples
+        # perm = torch.randperm(bs)
+        # feature_neg = [obs_i[perm] for obs_i in feature]
+        # actions_neg = actions[perm]
+        # mask_neg = mask[perm]
 
         pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
-        pred_next_dist_neg = self.forward_with_feature(feature_neg, actions_neg, mask_neg, forward_mode=forward_mode)
+        # pred_next_dist_neg = self.forward_with_feature(feature_neg, actions_neg, mask_neg, forward_mode=forward_mode)
 
         # prediction loss in the state / latent space, (bs, n_pred_step)
         if not self.update_num % (eval_freq * inference_gradient_steps):
             pred_next_dist = pred_next_dist[:2]                     # only consider full and masked distributions when updating causal mask
-            pred_next_dist_neg = pred_next_dist_neg[:2]
+            # pred_next_dist_neg = pred_next_dist_neg[:2]
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
-        pred_loss_neg, _ = self.prediction_loss_from_multi_dist(pred_next_dist_neg, next_feature)
-        pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
-        print(pred_loss_neg)
+        # pred_loss_neg, _ = self.prediction_loss_from_multi_dist(pred_next_dist_neg, next_feature)
+        # pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
+        # print(pred_loss_neg)
 
-        loss = pred_loss + pred_loss_neg
+        # loss = pred_loss + pred_loss_neg
+        loss = pred_loss
 
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
@@ -744,15 +745,18 @@ class InferenceCMI(Inference):
 
         masked_pred_losses = []
         with torch.no_grad():
-            feature = self.encoder(obs)
-            # next_feature = self.encoder(next_obses)
-            next_feature = self.encoder_iden(next_obses)
-            for i in range(feature_dim):
-                mask = self.get_eval_mask(bs, i)
+            feature, feature_target = self.encoder(obs)
+            next_feature, next_feature_target = self.encoder(next_obses)
+            # next_feature, next_feature_target = self.encoder_iden(next_obses)
+            for i in range(feature_dim + 1):
+                mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
+                # print(i, mask)
                 if i == 0:
-                    pred_next_dists = self.forward_with_feature(feature, actions, mask)
+                    pred_next_dists = self.forward_with_feature(feature, actions, mask, forward_mode=("full", "masked"))
+                    # pred_next_dists = self.forward_with_feature(feature, actions, mask)
                     # pred_loss: (bs, n_pred_step, feature_dim)
-                    full_pred_loss, masked_pred_loss, eval_pred_loss = \
+                    # full_pred_loss, masked_pred_loss, eval_pred_loss = \
+                    full_pred_loss, masked_pred_loss = \
                         [self.prediction_loss_from_dist(pred_next_dist_i, next_feature, keep_variable_dim=True)
                          for pred_next_dist_i in pred_next_dists]
                 else:
@@ -764,12 +768,13 @@ class InferenceCMI(Inference):
                 masked_pred_loss = masked_pred_loss.mean(dim=1)                         # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)
 
+            # A new axis is inserted at the end of the array to make the array compatible for broadcasting
             full_pred_loss = full_pred_loss.mean(dim=1)[..., None]                      # (bs, feature_dim, 1)
-            eval_pred_loss = eval_pred_loss.sum(dim=(1, 2)).mean()                      # scalar
-            eval_details["eval_pred_loss"] = eval_pred_loss
+            # eval_pred_loss = eval_pred_loss.sum(dim=(1, 2)).mean()                      # scalar
+            # eval_details["eval_pred_loss"] = eval_pred_loss
 
-        # bs * predicted_next_features * masked_current_features (ignore self-connection)
-        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim)
+        # bs * predicted_next_features * masked_current_features (without self-connection mask)
+        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim + 1)
 
         # clean cache
         self.use_cache = False
@@ -779,9 +784,10 @@ class InferenceCMI(Inference):
 
         # full_pred_loss uses all state variables + action,
         # while along the last dim, masked_pred_losses drops either one state variable or the action
-        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim)
+        # As the losses are negative log likelihood, the masked and full are swapped around in estimating CMI
+        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim + 1)
         # next_jth_feature * current_ith_feature (exclude self-connection, i.e., i != j)
-        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim)
+        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim + 1)
 
         self.eval_step_CMI += CMI
         self.mask_update_idx += 1
@@ -791,17 +797,18 @@ class InferenceCMI(Inference):
         if self.mask_update_idx == eval_steps:
             self.eval_step_CMI /= eval_steps
 
-            eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
-            eval_step_CMI *= self.CMI_threshold
+            # eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
+            # eval_step_CMI *= self.CMI_threshold
 
             # (feature_dim, feature_dim), (feature_dim, feature_dim)
-            upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
-            eval_step_CMI[:, 1:] += upper_tri
-            eval_step_CMI[:, :-1] += lower_tri
+            # upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
+            # eval_step_CMI[:, 1:] += upper_tri
+            # eval_step_CMI[:, :-1] += lower_tri
+            # self.eval_step_CMI[torch.eye(feature_dim, feature_dim + 1, dtype=torch.bool, device=self.device)] += self.CMI_threshold
 
-            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
+            self.mask_CMI = self.mask_CMI * eval_tau + self.eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
             self.mask = self.mask_CMI >= self.CMI_threshold
-            self.mask[self.diag_mask] = True
+            # self.mask[self.diag_mask] = True
 
         return eval_details
 
@@ -955,5 +962,5 @@ class InferenceCMI(Inference):
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             self.mask_CMI = checkpoint["mask_CMI"]
             self.mask = self.mask_CMI >= self.CMI_threshold
-            self.mask_CMI[self.diag_mask] = self.CMI_threshold
-            self.mask[self.diag_mask] = True
+            # self.mask_CMI[self.diag_mask] = self.CMI_threshold
+            # self.mask[self.diag_mask] = True

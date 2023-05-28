@@ -61,6 +61,7 @@ def train(params):
         torch.save(env.get_save_information(), os.path.join(params.rslts_dir, "chemical_env_params"))
     hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
     num_objects = params.env_params.chemical_env_params.num_objects
+    num_colors = params.env_params.chemical_env_params.num_colors
     params.obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_objects_ind]
     hidden_state_keys = [params.obs_keys_f[i] for i in range(num_objects) if i in hidden_objects_ind]
 
@@ -87,6 +88,7 @@ def train(params):
     else:
         raise NotImplementedError
     inference = Inference(encoder, params)
+    inference.eval()
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -125,13 +127,15 @@ def train(params):
     model_dir = os.path.join(params.rslts_dir, "trained_models")
     os.makedirs(model_dir, exist_ok=True)
 
-    start_step = get_start_step_from_model_loading(params)
+    # start_step = get_start_step_from_model_loading(params)
+    start_step = 0
     total_steps = training_params.total_steps
     collect_env_step = training_params.collect_env_step
     supervised_encoder = training_params.supervised_encoder
     supervised_encoder_plot = training_params.supervised_encoder_plot
     inference_gradient_steps = training_params.inference_gradient_steps
     policy_gradient_steps = training_params.policy_gradient_steps
+    load_inference = training_params.load_inference
     train_prop = inference_params.train_prop
 
     # init episode variables
@@ -150,11 +154,51 @@ def train(params):
     losses = []
     steps = []
 
+    # # load trained model
+    # checkpoint = torch.load(load_inference)
+    # inference.load_state_dict(checkpoint['model'])
+    # inference.eval()
+    # encoder = inference.encoder
+    # encoder.eval()
+
+    # init decoder
+    class LiDecoder(nn.Module):
+        def __init__(self, input_dim, output_dim):
+            super(LiDecoder, self).__init__()
+            self.fc1 = nn.Linear(input_dim, output_dim)
+
+        def forward(self, x):
+            out = self.fc1(x)
+            return out
+
+    class NonliDecoder(nn.Module):
+        def __init__(self, input_dim, hidden_dim, output_dim):
+            super(NonliDecoder, self).__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, output_dim)
+            )
+
+        def forward(self, x):
+            out = self.mlp(x)
+            return out
+
+    linear_decoder = True
+    if linear_decoder:
+        decoder = LiDecoder(num_colors, num_colors)
+    else:
+        decoder = NonliDecoder(num_colors, 128, num_colors)
+
+    # loss and optimizer for decoder
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=1e-3)
+
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
         is_enc_pretrain = 0 <= step - training_params.init_steps < training_params.enc_pretrain_steps
-        print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
-                                                                      is_enc_pretrain))
+        # print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
+        #                                                               is_enc_pretrain))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -237,7 +281,6 @@ def train(params):
             next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs = preprocess_obs(next_obs, params)
             next_obs_f['act'] = np.zeros(1)
-            next_obs['act'] = np.zeros(1)
 
             # print(f"EPISODE STEP: {episode_step}")
             # is_train: if the transition is training data or evaluation data for inference_cmi
@@ -248,7 +291,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,
                           info=info,
                           )
                 )
@@ -263,7 +306,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,
                           info=info,
                           )
                 )
@@ -283,140 +326,69 @@ def train(params):
         if is_init_stage:
             continue
 
-        if supervised_encoder:
-            batch_data, _ = buffer_train.sample(inference_params.batch_size)
-            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-            label_batch = to_torch(batch_data.info, torch.int64, params.device)
-            label_batch = label_batch[:, -1]  # keep only the current label_batch
-            label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+        batch_data, _ = buffer_train.sample(inference_params.batch_size)
+        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+        label_batch = to_torch(batch_data.info, torch.int64, params.device)
+        label_batch = label_batch[:, -1]  # keep only the current label_batch
+        label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+        label_batch = F.one_hot(label_batch, num_colors).float()
 
-            # Forward pass
-            obs_softmax = encoder(obs_batch)[hidden_objects_ind[0]]
-            obs_log_prob = torch.log(obs_softmax)
-            loss = criterion(obs_log_prob, label_batch)
+        # Forward pass
+        obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
+        _, pred_batch = torch.max(obs_softmax, 1)
 
-            # Backward and optimize
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # # label-> decoder -> encoder prediction
+        # logits = decoder(label_batch)
+        # loss = criterion(logits, pred_batch)
 
-            if (step + 1) % 100 == 0:
-                print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
-            losses.append(loss.item())
-            steps.append(step + 1)
+        # encoder prediction -> decoder -> label
+        logits = decoder(obs_softmax)
+        loss = criterion(logits, label_batch_)
 
-            if is_enc_pretrain:
-                continue
-            supervised_encoder = False
-            encoder.eval()  # RNN in eval mode returns F.one_hot colors; its parameters are fixed
-            # print('Parameters in encoder (eval mode)')
-            # for name, value in encoder.named_parameters():
-            #     print(name, value)
+        # Backward and optimize
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-        if inference_gradient_steps > 0:
-            inference.train()
-            inference.setup_annealing(step)
-            for i_grad_step in range(inference_gradient_steps):
-                batch_data, _ = buffer_train.sample(inference_params.batch_size)
-                obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                for key, tensor in next_obses_batch.items():
-                    next_obses_batch[key] = tensor.unsqueeze(-1)
-                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch)
-                loss_details["inference"].append(loss_detail)
-            # print('Parameters in inference (train mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
+        if (step + 1) % 100 == 0:
+            print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
+        losses.append(loss.item())
+        steps.append(step + 1)
 
-            inference.eval()
-            if (step + 1) % cmi_params.eval_freq == 0:
-                if use_cmi:
-                    # if do not update inference, there is no need to update inference eval mask
-                    inference.reset_causal_graph_eval()
-                    for _ in range(cmi_params.eval_steps):
-                        batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                        actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                        next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                        for key, tensor in next_obses_batch.items():
-                            next_obses_batch[key] = tensor.unsqueeze(-1)
-                        eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
-                        loss_details["inference_eval"].append(eval_pred_loss)
-                else:
-                    batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    loss_detail = inference.update(batch_data.obs, batch_data.act, batch_data.obs_next, eval=True)
-                    loss_details["inference_eval"].append(loss_detail)
-            # print('Parameters in inference (eval mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
 
-        if policy_gradient_steps > 0 and rl_algo != "random":
-            policy.train()
-            if rl_algo in ["ppo", "hippo"]:
-                loss_detail = policy.update()
-                loss_details["policy"].append(loss_detail)
-            else:
-                policy.setup_annealing(step)
-                for i_grad_step in range(policy_gradient_steps):
-                    obs_batch, actions_batch, rewards_batch, idxes_batch = \
-                        replay_buffer.sample_model_based(policy_params.batch_size)
+    # testing decoder
+    decoder.eval()
+    with torch.no_grad():
+        batch_data, _ = buffer_eval_cmi.sample(1000)
+        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+        label_batch = to_torch(batch_data.info, torch.int64, params.device)
+        label_batch = label_batch[:, -1]
+        label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+        label_batch = F.one_hot(label_batch, num_colors).float()
 
-                    loss_detail = policy.update(obs_batch, actions_batch, rewards_batch)
-                    if use_prioritized_buffer:
-                        replay_buffer.update_priorties(idxes_batch, loss_detail["priority"])
-                    loss_details["policy"].append(loss_detail)
-            policy.eval()
+        obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
+        _, pred_batch_enc = torch.max(obs_softmax, 1)
 
-        # logging
-        if writer is not None:
-            for module_name, module_loss_detail in loss_details.items():
-                if not module_loss_detail:
-                    continue
-                # list of dict to dict of list
-                if isinstance(module_loss_detail, list):
-                    keys = set().union(*[dic.keys() for dic in module_loss_detail])
-                    module_loss_detail = {k: [dic[k].item() for dic in module_loss_detail if k in dic]
-                                          for k in keys if k not in ["priority"]}
-                for loss_name, loss_values in module_loss_detail.items():
-                    writer.add_scalar("{}/{}".format(module_name, loss_name), np.mean(loss_values), step)
+        # # label-> decoder -> encoder prediction
+        # logits = decoder(label_batch)
+        # _, pred_batch_dec = torch.max(logits, 1)
 
-            if (step + 1) % training_params.plot_freq == 0 and inference_gradient_steps > 0:
-                plot_adjacency_intervention_mask(params, inference, writer, step)
+        # encoder prediction -> decoder -> label
+        logits = decoder(obs_softmax)
+        _, pred_batch_dec = torch.max(logits, 1)
 
-        # saving training results
-        if (step + 1) % training_params.saving_freq == 0:
-            if inference_gradient_steps > 0:
-                inference.save(os.path.join(model_dir, "inference_{}".format(step + 1)))
-            if policy_gradient_steps > 0:
-                policy.save(os.path.join(model_dir, "policy_{}".format(step + 1)))
+        n_samples = pred_batch_enc.size(0)
+        n_correct_enc = (label_batch_ == pred_batch_enc).sum().item()
+        # n_correct_dec = (pred_batch_dec == pred_batch_enc).sum().item()  # label-> decoder -> encoder prediction
+        n_correct_dec = (pred_batch_dec == label_batch_).sum().item()  # encoder prediction -> decoder -> label
 
-    if supervised_encoder_plot:
-        # plt.plot(steps, losses)
-        # plt.title("Training Loss")
-        # plt.xlabel("Step")
-        # plt.ylabel("Loss")
-        # plt.show()
-
-        with torch.no_grad():
-            batch_data, _ = buffer_eval_cmi.sample(2000)
-            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-            label_batch = to_torch(batch_data.info, torch.int64, params.device)
-            label_batch = label_batch[:, -1]
-            label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
-
-            obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
-            _, pred_batch = torch.max(obs_softmax, 1)
-            n_samples = label_batch.size(0)
-            n_correct = (pred_batch == label_batch).sum().item()
-
-            acc = 100.0 * n_correct / n_samples
-            corr_coef = torch.corrcoef(torch.stack([pred_batch, label_batch]))
-            print(f'Predictions: {pred_batch.view(-1, 5)[:10]}, {pred_batch.max()}, {pred_batch.min()}')
-            print(f'Labels: {label_batch.view(-1, 5)[:10]}')
-            print(f'Testing accuracy over {n_samples} samples: {n_correct} / {n_samples} = {acc}%')
-            print(f'Correlation coefficient: {corr_coef}')
-
+        acc_enc = 100.0 * n_correct_enc / n_samples
+        acc_dec = 100.0 * n_correct_dec / n_samples
+        print(f'Encoder Predictions: {pred_batch_enc.view(-1, 5)[:10]}')
+        print(f'Labels: {label_batch_.view(-1, 5)[:10]}')
+        print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}')
+        print(f'Testing accuracy of encoder over {n_samples} samples: {n_correct_enc} / {n_samples} = {acc_enc}%')
+        print(f'Testing accuracy of decoder over {n_samples} samples: {n_correct_dec} / {n_samples} = {acc_dec}%')
 
 if __name__ == "__main__":
     params = TrainingParams(training_params_fname="policy_params.json", train=True)

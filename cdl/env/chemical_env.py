@@ -347,8 +347,15 @@ class Chemical(gym.Env):
         s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
         a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
 
-        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix + torch.eye(self.num_objects), s_t) + a_t,
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix + torch.eye(self.num_objects), s_t) + a_t,
+        #                   self.num_colors)  # one-step transition
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix + torch.eye(self.num_objects), s_t),
+        #                   self.num_colors)  # one-step transition
+        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t),
                           self.num_colors)  # one-step transition
+        # s_t1 = torch.matmul(self.adjacency_matrix + torch.eye(self.num_objects), s_t) // torch.sum(
+        #     self.adjacency_matrix + torch.eye(self.num_objects), dim=1)
+
         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
         return s_t1
 
@@ -368,6 +375,7 @@ class Chemical(gym.Env):
         num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
         self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
+        self.adjacency_matrix[0, 0] = 1
         print(self.adjacency_matrix)
         self.reset()
 
@@ -630,7 +638,8 @@ class Chemical(gym.Env):
         self.cur_step += 1
 
         state = self.get_state()
-        terminated = matches == num_needed_match
+        # terminated = matches == num_needed_match
+        terminated = False
         truncated = self.cur_step >= self.max_steps
 
         ########################################################
