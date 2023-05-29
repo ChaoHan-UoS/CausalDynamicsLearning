@@ -160,17 +160,20 @@ class RecurrentEncoder(Recurrent):
 
         self.params = params
         self.num_objects = params.env_params.chemical_env_params.num_objects
-        self.num_hidden_objects = len(params.env_params.chemical_env_params.hidden_objects_ind)
+        self.hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
+        self.num_hidden_objects = len(self.hidden_objects_ind)
         self.num_colors = params.env_params.chemical_env_params.num_colors
 
-        self.keys = [key for key in params.obs_keys if params.obs_spec[key].ndim == 1]
-        ####################### dset #######################
-        self.keys_dset_ = ['obj0', 'obj1', 'obj3', 'obj4']
-        # self.keys_dset_ = ['obj0', 'obj2']
+        # d-set
+        self.keys_dset_ = params.env_params.chemical_env_params.keys_dset
         self.keys_dset = self.keys_dset_ + params.goal_keys
         self.keys_remapped_dset = self.keys_dset + ['act']
-        ####################### dset #######################
+
+        self.keys_ = [key for key in params.obs_keys if params.obs_spec[key].ndim == 1]
+        self.keys = self.keys_ + params.goal_keys
         self.keys_remapped = self.keys + ['act']
+
+        # input features of recurrent encoder, where d-set features are fed to LSTM
         self.feature_dim_p = np.sum([len(params.obs_spec[key]) for key in self.keys])
         self.continuous_state = params.continuous_state
         self.feature_inner_dim_p = None
@@ -180,7 +183,7 @@ class RecurrentEncoder(Recurrent):
         self.feature_inner_dim_remapped_p_dset = np.append(self.feature_inner_dim_p_dset, params.action_dim)
         self.feature_inner_dim_remapped_p = np.append(self.feature_inner_dim_p, params.action_dim)
 
-        # the output feature of the recurrent encoder
+        # output features of recurrent encoder
         self.feature_dim = self.num_objects
         self.feature_inner_dim = None
         if not self.continuous_state:
@@ -202,24 +205,23 @@ class RecurrentEncoder(Recurrent):
             obs = torch.cat([obs[k] for k in self.keys], dim=-1)
             return obs
         else:
-            # obs_forward = [obs_k_i
-            #        for k in self.keys_remapped
-            #        for obs_k_i in torch.unbind(obs[k], dim=-1)]
-            # obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-            #        for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
-            # obs_obs_forward = torch.stack(obs_forward[:-2], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
-            # obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])
+            obs_forward = [obs_k_i
+                   for k in self.keys_remapped
+                   for obs_k_i in torch.unbind(obs[k], dim=-1)]
+            obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
+                   for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
+            obs_obs_forward_ = torch.stack(obs_forward[:-1], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
+            obs_obs_forward_ = torch.unbind(obs_obs_forward_[:, :, -1])  # slice the current obs from the stack_num history
+            obs_obs_forward = obs_obs_forward_[:len(self.keys_)]
+            obs_obs_forward_target = obs_obs_forward_[-len(self.params.goal_keys):]
 
             obs = [obs_k_i
                    for k in self.keys_remapped_dset
                    for obs_k_i in torch.unbind(obs[k], dim=-1)]
             obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
                    for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim_remapped_p_dset)]
-            obs_obs_forward_ = obs_obs_ = torch.stack(obs[:-1], dim=0)
+            obs_obs_ = torch.stack(obs[:-1], dim=0)
             obs_obs = obs_obs_[:len(self.keys_dset_)]
-            obs_obs_forward_ = torch.unbind(obs_obs_forward_[:, :, -1])  # slice the current obs from the stack_num history
-            obs_obs_forward = obs_obs_forward_[:len(self.keys_dset_)]
-            obs_obs_forward_target = obs_obs_forward_[-len(self.params.goal_keys):]
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
@@ -242,7 +244,7 @@ class RecurrentEncoder(Recurrent):
                 obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
             obs = obs.reshape(self.num_hidden_objects, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
             if self.training:
-                obs = F.gumbel_softmax(obs, hard=True)
+                obs = F.gumbel_softmax(obs, hard=False)
             else:
                 obs = F.one_hot(torch.argmax(obs, dim=-1), obs.size(-1)).float()
             if obs_obs_dims == 5:
@@ -250,11 +252,10 @@ class RecurrentEncoder(Recurrent):
             # print('Recovered obj 2')
             # print(obs[:, 0])
             # obs = obs_obs_forward[:1] + torch.unbind(obs) + obs_obs_forward[1:]  # concatenate RNN's output and FNN's
-            obs = obs_obs_forward[:2] + torch.unbind(obs) + obs_obs_forward[2:]  # concatenate RNN's output and FNN's
+            obs = obs_obs_forward[:self.hidden_objects_ind[0]] + torch.unbind(obs) + obs_obs_forward[self.hidden_objects_ind[0]:]  # concatenate RNN's output and FNN's
             obs_target = obs + obs_obs_forward_target
             # obs = torch.unbind(obs)  # for supervised RNN
-            obs = list(obs)
-            obs_target = list(obs_target)
+            obs, obs_target = list(obs), list(obs_target)
 
             return obs, obs_target
 
@@ -266,8 +267,7 @@ def make_encoder(params):
         chemical_env_params = params.env_params.chemical_env_params
         layer_num = recurrent_enc_params.layer_num
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
-        ####################### dset #######################
-        obs_shape = 4 * chemical_env_params.num_colors + params.action_dim
+        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
         logit_shape = len(chemical_env_params.hidden_objects_ind) * chemical_env_params.num_colors  # recover the hidden objects
         device = params.device

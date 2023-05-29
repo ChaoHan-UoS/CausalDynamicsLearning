@@ -131,10 +131,7 @@ def train(params):
     start_step = 0
     total_steps = training_params.total_steps
     collect_env_step = training_params.collect_env_step
-    supervised_encoder = training_params.supervised_encoder
-    supervised_encoder_plot = training_params.supervised_encoder_plot
-    inference_gradient_steps = training_params.inference_gradient_steps
-    policy_gradient_steps = training_params.policy_gradient_steps
+    supervised_decoder = training_params.supervised_decoder
     load_inference = training_params.load_inference
     train_prop = inference_params.train_prop
 
@@ -326,34 +323,35 @@ def train(params):
         if is_init_stage:
             continue
 
-        batch_data, _ = buffer_train.sample(inference_params.batch_size)
-        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-        label_batch = to_torch(batch_data.info, torch.int64, params.device)
-        label_batch = label_batch[:, -1]  # keep only the current label_batch
-        label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
-        label_batch = F.one_hot(label_batch, num_colors).float()
+        if supervised_decoder:
+            batch_data, _ = buffer_train.sample(inference_params.batch_size)
+            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+            label_batch = to_torch(batch_data.info, torch.int64, params.device)
+            label_batch = label_batch[:, -1]  # keep only the current label_batch
+            label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+            label_batch = F.one_hot(label_batch, num_colors).float()
 
-        # Forward pass
-        obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
-        _, pred_batch = torch.max(obs_softmax, 1)
+            # Forward pass
+            obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
+            _, pred_batch = torch.max(obs_softmax, 1)
 
-        # # label-> decoder -> encoder prediction
-        # logits = decoder(label_batch)
-        # loss = criterion(logits, pred_batch)
+            # # label-> decoder -> encoder prediction
+            # logits = decoder(label_batch)
+            # loss = criterion(logits, pred_batch)
 
-        # encoder prediction -> decoder -> label
-        logits = decoder(obs_softmax)
-        loss = criterion(logits, label_batch_)
+            # encoder prediction -> decoder -> label
+            logits = decoder(obs_softmax)
+            loss = criterion(logits, label_batch_)
 
-        # Backward and optimize
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            # Backward and optimize
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-        if (step + 1) % 100 == 0:
-            print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
-        losses.append(loss.item())
-        steps.append(step + 1)
+            if (step + 1) % 100 == 0:
+                print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
+            losses.append(loss.item())
+            steps.append(step + 1)
 
 
     # testing decoder

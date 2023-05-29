@@ -235,8 +235,8 @@ def train(params):
             obs['act'] = np.array([action*0])
 
             next_obs_f = preprocess_obs(next_obs_f, params)
-            next_obs = preprocess_obs(next_obs, params)
             next_obs_f['act'] = np.zeros(1)
+            next_obs = preprocess_obs(next_obs, params)
             next_obs['act'] = np.zeros(1)
 
             # print(f"EPISODE STEP: {episode_step}")
@@ -248,7 +248,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,  # next_obs_f when using identity encoder for next feature
                           info=info,
                           )
                 )
@@ -263,7 +263,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
+                          obs_next=next_obs_f,
                           info=info,
                           )
                 )
