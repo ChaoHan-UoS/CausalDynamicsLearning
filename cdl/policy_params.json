@@ -60,12 +60,12 @@
     "training_params": {
         "inference_algo": "cmi",
         "rl_algo": "random",
-        "load_inference": "/home/chao/PycharmProjects/CausalDynamicsLearning/rslts/dynamics/chemical_full_dynamics_cmi_2023_05_29_12_12_07/trained_models/inference_60000",
+        "load_inference": "",
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 60000,
-        "enc_pretrain_steps": 50000,
+        "total_steps": 40000,
+        "enc_pretrain_steps": 30000,
         "init_steps": 10000,
         "collect_env_step": true,
         "supervised_encoder": false,
@@ -106,11 +106,11 @@
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
             "eval_tau": 0.999,
-            "eval_freq": 500,
+            "eval_freq": 200,
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,
-            "hinge": 50.0
+            "hinge": 10.0
         },
         "nps_params": {
             "num_rule": 4,

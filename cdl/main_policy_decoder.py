@@ -89,6 +89,7 @@ def train(params):
         raise NotImplementedError
     inference = Inference(encoder, params)
     inference.eval()
+    print('mask_CMI\n', inference.mask_CMI)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -384,9 +385,9 @@ def train(params):
         acc_dec = 100.0 * n_correct_dec / n_samples
         print(f'Encoder Predictions: {pred_batch_enc.view(-1, 5)[:10]}')
         print(f'Labels: {label_batch_.view(-1, 5)[:10]}')
-        print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}')
+        # print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}')
         print(f'Testing accuracy of encoder over {n_samples} samples: {n_correct_enc} / {n_samples} = {acc_enc}%')
-        print(f'Testing accuracy of decoder over {n_samples} samples: {n_correct_dec} / {n_samples} = {acc_dec}%')
+        # print(f'Testing accuracy of decoder over {n_samples} samples: {n_correct_dec} / {n_samples} = {acc_dec}%')
 
 if __name__ == "__main__":
     params = TrainingParams(training_params_fname="policy_params.json", train=True)

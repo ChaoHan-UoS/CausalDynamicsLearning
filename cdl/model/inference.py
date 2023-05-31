@@ -254,9 +254,20 @@ class Inference(nn.Module):
         else:
             if self.continuous_state:
                 next_feature = next_feature.detach()
+                pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)   # (bs, n_pred_step, feature_dim)
             else:
-                next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
-            pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)       # (bs, n_pred_step, feature_dim)
+                # not backprop the gradient along the path of encoder
+                # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+
+                # NLL loss of the OneHotCategorical distribution
+                # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature) # (bs, n_pred_step, feature_dim)
+
+                # KL loss between two OneHotCategorical distributions
+                next_feature = [OneHotCategorical(probs=next_feature_i)                 # a list of distributions, [OneHotCategorical] * feature_dim,
+                                for next_feature_i in next_feature]                     # each of shape (bs, n_pred_step, feature_i_dim)
+                pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                    # [(bs, n_pred_step)] * feature_dim
+                             for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
+                pred_loss = torch.stack(pred_loss, dim=-1)                              # (bs, n_pred_step, feature_dim)
 
         if not keep_variable_dim:
             pred_loss = pred_loss.sum(dim=-1)                                           # (bs, n_pred_step)

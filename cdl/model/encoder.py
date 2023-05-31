@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from tianshou.utils.net.common import Recurrent, Net
+from torch.distributions.one_hot_categorical import OneHotCategorical
 
 def tie_weights(src, trg):
     assert type(src) == type(trg)

@@ -248,7 +248,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs_f,  # next_obs_f when using identity encoder for next feature
+                          obs_next=next_obs,  # next_obs_f when using identity encoder for next feature
                           info=info,
                           )
                 )
@@ -263,7 +263,7 @@ def train(params):
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs_f,
+                          obs_next=next_obs,
                           info=info,
                           )
                 )
