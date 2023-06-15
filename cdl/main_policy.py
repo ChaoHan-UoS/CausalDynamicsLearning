@@ -38,8 +38,24 @@ from env.chemical_env import Chemical
 
 import matplotlib.pyplot as plt
 import matplotlib
-
 matplotlib.use('TkAgg')
+
+def sample_process(batch_data, params):
+    replay_buffer_params = params.training_params.replay_buffer_params
+    inference_params = params.inference_params
+
+    batch_data = to_torch(batch_data, torch.int64, params.device)
+    obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]  # Batch(obs_i_key: (bs, stack_num, obs_i_shape))
+    actions_batch = []
+    next_obses_batch = []
+    for i in range(inference_params.n_pred_step):
+        actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 1])
+        next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
+    actions_batch = torch.stack(actions_batch, dim=-2)  # (bs, n_pred_step, action_dim)
+    next_obses_batch = Batch.stack(next_obses_batch,
+                                   axis=-2)  # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
+
+    return obs_batch, actions_batch, next_obses_batch
 
 
 def train(params):
@@ -111,12 +127,14 @@ def train(params):
     else:
         buffer_train = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
+            # stack_num=replay_buffer_params.stack_num,
+            stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
             sample_avail=True,
         )
         buffer_eval_cmi = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num,  # the stack_num is for RNN training: sample framestack obs
+            # stack_num=replay_buffer_params.stack_num,
+            stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
             sample_avail=True,
         )
 
@@ -315,14 +333,11 @@ def train(params):
 
         if inference_gradient_steps > 0:
             inference.train()
+            encoder.train()
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, _ = buffer_train.sample(inference_params.batch_size)
-                obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                for key, tensor in next_obses_batch.items():
-                    next_obses_batch[key] = tensor.unsqueeze(-1)
+                obs_batch, actions_batch, next_obses_batch = sample_process(batch_data, params)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch)
                 loss_details["inference"].append(loss_detail)
             # print('Parameters in inference (train mode)')
@@ -330,17 +345,14 @@ def train(params):
             #     print(name, value)
 
             inference.eval()
-            if (step + 1) % cmi_params.eval_freq == 0:
+            encoder.eval()
+            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
                         batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
-                        actions_batch = to_torch(batch_data.act, torch.int64, params.device).unsqueeze(-1).unsqueeze(-1)
-                        next_obses_batch = to_torch(batch_data.obs_next, torch.float32, params.device)
-                        for key, tensor in next_obses_batch.items():
-                            next_obses_batch[key] = tensor.unsqueeze(-1)
+                        obs_batch, actions_batch, next_obses_batch = sample_process(batch_data, params)
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:

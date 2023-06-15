@@ -194,8 +194,8 @@ class RecurrentEncoder(Recurrent):
 
     def forward(self, obs, s_0=None, info={}, detach=False):
         """
-        :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape)) or Batch(obs_i_key: (bs, stack_num, 1, obs_i_shape))
-        :return: a list of num_objects elements, each of which is a tensor with shape (bs, num_colors) or (bs, 1, num_colors)
+        :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+        :return: [(bs, (n_pred_step), num_colors)] * num_objects
         """
         if self.continuous_state:
             # overwrite some observations for out-of-distribution evaluation
@@ -206,59 +206,79 @@ class RecurrentEncoder(Recurrent):
             obs = torch.cat([obs[k] for k in self.keys], dim=-1)
             return obs
         else:
+            """FNN as identity map of observables"""
             obs_forward = [obs_k_i
-                   for k in self.keys_remapped
-                   for obs_k_i in torch.unbind(obs[k], dim=-1)]
+                           for k in self.keys_remapped
+                           for obs_k_i in torch.unbind(obs[k], dim=-1)]
             obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-                   for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
-            obs_obs_forward_ = torch.stack(obs_forward[:-1], dim=0)  # shape (num_observed_objects, bs, stack_num, (1), num_colors)
-            obs_obs_forward_ = torch.unbind(obs_obs_forward_[:, :, -1])  # slice the current obs from the stack_num history
-            obs_obs_forward = obs_obs_forward_[:len(self.keys_)]
-            obs_obs_forward_target = obs_obs_forward_[-len(self.params.goal_keys):]
+                           for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_remapped_p)]
 
+            # slice out the actions
+            obs_obs_forward_ = torch.stack(obs_forward[:-1], dim=0)  # (num_observed_objects + num_target_objects, bs, stack_num, (n_pred_step), num_colors)
+            # slice the current obs from the stack_num history
+            obs_obs_forward_ = torch.unbind(obs_obs_forward_[:, :, -1])  # [(bs, (n_pred_step), num_colors)] * (num_observed_objects + num_target_objects)
+
+            # slice out the target objects
+            obs_obs_forward = obs_obs_forward_[:len(self.keys_)]  # [(bs, (n_pred_step), num_colors)] * num_observed_objects
+            obs_obs_forward_target = obs_obs_forward_[-len(self.params.goal_keys):]  # [(bs, (n_pred_step), num_colors)] * num_target_objects
+
+            """RNN fed by d-set"""
             obs = [obs_k_i
                    for k in self.keys_remapped_dset
                    for obs_k_i in torch.unbind(obs[k], dim=-1)]
             obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
                    for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim_remapped_p_dset)]
-            obs_obs_ = torch.stack(obs[:-1], dim=0)
-            obs_obs = obs_obs_[:len(self.keys_dset_)]
+
+            # slice out the actions
+            obs_obs_ = torch.stack(obs[:-1], dim=0)  # (num_dset_objects + num_target_objects, bs, stack_num, (n_pred_step), num_colors)
+            # slice in the d-set objects
+            obs_obs = obs_obs_[:len(self.keys_dset_)]  # (num_dset_objects, bs, stack_num, (n_pred_step), num_colors)
+
+            obs_act = obs[-1]  # (bs, stack_num, (n_pred_step), action_dim)
+            obs_act[:, -1] = obs_act[:, -1] * 0  # mask out the last action in the stacked obs
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
-                obs_obs = obs_obs.permute(1, 2, 0, 3, 4)  # shape (bs, stack_num, num_observed_objects, 1, num_colors)
-            else:
-                obs_obs = obs_obs.permute(1, 2, 0, 3)  # shape (bs, stack_num, num_observed_objects, num_colors)
-            obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # shape (bs, stack_num, num_observed_objects * num_colors)
-            obs_act = obs[-1]  # shape (bs, stack_num, (1), action_dim)
-            obs_act[:, -1] = obs_act[:, -1] * 0  # mask out the last action in the stacked obs
-            obs_act = obs_act.reshape(obs_act.shape[:2] + (-1,))  # shape (bs, stack_num, action_dim)
-            # concatenate one-hot observation, action and episode step along the last dim
-            obs = torch.cat([obs_obs, obs_act], dim=-1)  # shape (bs, stack_num, num_observed_objects * num_colors + action_dim)
+                obs_obs = obs_obs.permute(1, 2, 0, 3, 4)  # (bs, stack_num, num_dset_objects, n_pred_step, num_colors)
+                obs_obs_pred_step = [obs_obs_i.reshape(obs_obs.shape[:2] + (-1,))
+                                     for obs_obs_i in
+                                     torch.unbind(obs_obs, dim=-2)]  # [(bs, stack_num, num_dset_objects * num_colors)] * n_pred_step
+                obs_act_pred_step = [obs_act_i
+                                     for obs_act_i in
+                                     torch.unbind(obs_act, dim=-2)]  # [(bs, stack_num, action_dim)] * n_pred_step
+                # concatenate one-hot observation and action along the last dim
+                obs_pred_step = [torch.cat([obs_i, acts_i], dim=-1)  # [(bs, stack_num, num_dset_objects * num_colors + action_dim)] * n_pred_step
+                                 for obs_i, acts_i in zip(obs_obs_pred_step, obs_act_pred_step)]
+                obs_enc = []
+                for obs_i in obs_pred_step:
+                    obs_enc_i, s_n = super().forward(obs_i, s_0, info)  # obs_enc with shape (bs, logit_shape)
+                    s_0 = s_n
 
-            obs, s_n = super().forward(obs, s_0, info)  # obs with shape (bs, logit_shape)
-            # overwrite some observations for out-of-distribution evaluation
-            if not getattr(self, "chemical_train", True):
-                assert self.params.env_params.env_name == "Chemical"
-                assert self.params.env_params.chemical_env_params.continuous_pos
-                test_scale = self.chemical_test_scale
-                obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
-            obs = obs.reshape(self.num_hidden_objects, -1, self.num_colors)  # shape (num_hidden_objects, bs, num_colors)
-            if self.training:
-                obs = F.gumbel_softmax(obs, hard=False)
-            else:
-                obs = F.one_hot(torch.argmax(obs, dim=-1), obs.size(-1)).float()
-            if obs_obs_dims == 5:
-                obs = obs.unsqueeze(dim=-2)
-            # print('Recovered obj 2')
-            # print(obs[:, 0])
-            # obs = obs_obs_forward[:1] + torch.unbind(obs) + obs_obs_forward[1:]  # concatenate RNN's output and FNN's
-            obs = obs_obs_forward[:self.hidden_objects_ind[0]] + torch.unbind(obs) + obs_obs_forward[self.hidden_objects_ind[0]:]  # concatenate RNN's output and FNN's
-            obs_target = obs + obs_obs_forward_target
-            # obs = torch.unbind(obs)  # for supervised RNN
-            obs, obs_target = list(obs), list(obs_target)
+                    obs_enc_i = obs_enc_i.reshape(-1, self.num_hidden_objects, self.num_colors)  # (bs, num_hidden_objects, num_colors)
+                    obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=False) if self.training \
+                        else F.one_hot(torch.argmax(obs_enc_i, dim=-1), obs_enc_i.size(-1)).float()
+                    obs_enc.append(obs_enc_i)  # [(bs, num_hidden_objects, num_colors)] * n_pred_step
 
-            return obs, obs_target
+                obs_enc = torch.stack(obs_enc, dim=-2)  # (bs, num_hidden_objects, n_pred_step, num_colors)
+            else:
+                obs_obs = obs_obs.permute(1, 2, 0, 3)  # (bs, stack_num, num_dset_objects, num_colors)
+                obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_objects * num_colors)
+                # concatenate one-hot observation and action along the last dim
+                obs = torch.cat([obs_obs, obs_act], dim=-1)  # (bs, stack_num, num_dset_objects * num_colors + action_dim)
+
+                obs_enc, s_n = super().forward(obs, s_0, info)  # obs_enc with shape (bs, logit_shape)
+                obs_enc = obs_enc.reshape(-1, self.num_hidden_objects, self.num_colors)  # (bs, num_hidden_objects, num_colors)
+                obs_enc = F.gumbel_softmax(obs_enc, hard=False) if self.training \
+                    else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
+
+            obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_objects
+
+            """concatenate outputs of FNN and RNN"""
+            obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc + \
+                      obs_obs_forward[self.hidden_objects_ind[-1]:]  # [(bs, (n_pred_step), num_colors)] * num_objects
+            obs_enc, obs_enc_target = list(obs_enc), list(obs_enc + obs_obs_forward_target)
+
+            return obs_enc, obs_enc_target
 
 
 def make_encoder(params):
@@ -270,7 +290,7 @@ def make_encoder(params):
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
         obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape = len(chemical_env_params.hidden_objects_ind) * chemical_env_params.num_colors  # recover the hidden objects
+        logit_shape = len(chemical_env_params.hidden_objects_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
         device = params.device
         hidden_layer_size = recurrent_enc_params.hidden_layer_size
         encoder = RecurrentEncoder(params, layer_num, obs_shape, logit_shape, device, hidden_layer_size)

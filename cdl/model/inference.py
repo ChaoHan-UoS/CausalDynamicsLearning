@@ -37,6 +37,7 @@ class Inference(nn.Module):
 
         self.abstraction_quested = False
 
+        self.CEloss = nn.CrossEntropyLoss(reduction='none')
         self.to(device)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
 
@@ -250,24 +251,34 @@ class Inference(nn.Module):
         if isinstance(next_feature, Distribution):
             assert isinstance(next_feature, Normal)
             next_feature = Normal(next_feature.mean.detach(), next_feature.stddev.detach())
-            pred_loss = kl_divergence(next_feature, pred_dist)                          # (bs, n_pred_step, feature_dim)
+            pred_loss = kl_divergence(next_feature, pred_dist)                         # (bs, n_pred_step, feature_dim)
         else:
             if self.continuous_state:
                 next_feature = next_feature.detach()
-                pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)   # (bs, n_pred_step, feature_dim)
+                pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
             else:
-                # not backprop the gradient along the path of encoder
-                # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+                if self.training:
+                    # KL loss between two OneHotCategorical distributions
+                    next_feature = [OneHotCategorical(probs=next_feature_i)                # a list of distributions, [OneHotCategorical] * feature_dim,
+                                    for next_feature_i in next_feature]                    # each of shape (bs, n_pred_step, feature_i_dim)
+                    pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
+                                 for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-                # NLL loss of the OneHotCategorical distribution
-                # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature) # (bs, n_pred_step, feature_dim)
+                    # # Cross Entropy loss between two softmax distributions
+                    # next_feature = [next_feature_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                    #                 for next_feature_i in next_feature]
+                    # pred_dist = [pred_dist_i.probs.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                    #              for pred_dist_i in pred_dist]
+                    # pred_loss = [self.CEloss(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
+                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-                # KL loss between two OneHotCategorical distributions
-                next_feature = [OneHotCategorical(probs=next_feature_i)                 # a list of distributions, [OneHotCategorical] * feature_dim,
-                                for next_feature_i in next_feature]                     # each of shape (bs, n_pred_step, feature_i_dim)
-                pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                    # [(bs, n_pred_step)] * feature_dim
-                             for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
-                pred_loss = torch.stack(pred_loss, dim=-1)                              # (bs, n_pred_step, feature_dim)
+                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                else:
+                    # not backprop the gradient along the path of encoder
+                    # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+
+                    # NLL loss of the OneHotCategorical distribution
+                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
 
         if not keep_variable_dim:
             pred_loss = pred_loss.sum(dim=-1)                                           # (bs, n_pred_step)
