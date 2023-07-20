@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
-    "goal_keys": ["target_obj0", "target_obj1", "target_obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -35,8 +35,8 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
-            "keys_dset": ["obj0", "obj2"],
+            "hidden_objects_ind": [],
+            "keys_dset": ["obj0", "obj2", "target_obj0", "target_obj2"],
             "hidden_targets_ind": [],
             "num_objects": 3,
             "num_colors": 3,
@@ -60,12 +60,12 @@
     "training_params": {
         "inference_algo": "cmi",
         "rl_algo": "random",
-        "load_inference": "/home/chao/PycharmProjects/CausalDynamicsLearning/rslts/dynamics/chemical_full_dynamics_cmi_2023_06_07_18_24_26/trained_models/inference_40000",
+        "load_inference": "",
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 40000,
-        "enc_pretrain_steps": 30000,
+        "total_steps": 70000,
+        "enc_pretrain_steps": 60000,
         "init_steps": 10000,
         "collect_env_step": true,
         "supervised_encoder": false,
@@ -74,7 +74,7 @@
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
-        "plot_freq": 5000,
+        "plot_freq": 2500,
         "replay_buffer_params": {
             "capacity": 500000,
             "max_sample_time": 128,
@@ -88,6 +88,12 @@
         "encoder_type": "recurrent",
          "recurrent_enc_params": {
             "layer_num": 2,
+            "hidden_layer_size": 128
+         }
+    },
+    "decoder_params": {
+        "decoder_type": "feedforward",
+         "feedforward_dec_params": {
             "hidden_layer_size": 128
          }
     },
@@ -106,7 +112,7 @@
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
             "eval_tau": 0.999,
-            "eval_freq": 400,
+            "eval_freq": 100,
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,

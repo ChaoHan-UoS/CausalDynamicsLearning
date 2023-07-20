@@ -273,8 +273,8 @@ def train(params):
                 obs = preprocess_obs(obs, params)
             hidden_state = {key: obs_f[key] for key in hidden_state_keys}
             info.update(hidden_state)
-            # obs['act'] = np.array([action])
-            obs['act'] = np.array([action*0])
+            obs['act'] = np.array([action])
+            # obs['act'] = np.array([action*0])
 
             next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs = preprocess_obs(next_obs, params)
@@ -385,8 +385,7 @@ def train(params):
         acc_dec = 100.0 * n_correct_dec / n_samples
         print(f'Encoder Predictions: {pred_batch_enc.view(-1, 5)[:10]}')
         print(f'Labels: {label_batch_.view(-1, 5)[:10]}')
-        # print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}')
-        print(f'Testing accuracy of encoder over {n_samples} samples: {n_correct_enc} / {n_samples} = {acc_enc}%')
+        # print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}        print(f'Testing accuracy of encoder over {n_samples} samples: {n_correct_enc} / {n_samples} = {acc_enc}%')
         # print(f'Testing accuracy of decoder over {n_samples} samples: {n_correct_dec} / {n_samples} = {acc_dec}%')
 
 if __name__ == "__main__":

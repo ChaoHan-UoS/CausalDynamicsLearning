@@ -17,10 +17,11 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, params):
+    def __init__(self, encoder, decoder, params):
         super(Inference, self).__init__()
 
         self.encoder = encoder
+        self.decoder = decoder
 
         self.params = params
         self.device = device = params.device
@@ -37,7 +38,8 @@ class Inference(nn.Module):
 
         self.abstraction_quested = False
 
-        self.CEloss = nn.CrossEntropyLoss(reduction='none')
+        self.loss_mse = nn.MSELoss(reduction='none')
+        self.loss_ce = nn.CrossEntropyLoss(reduction='none')
         self.to(device)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
 
@@ -82,7 +84,7 @@ class Inference(nn.Module):
         list of distribution at different time steps to a single distribution stacked at dim=-2
         :param dist_list:
             if state space is continuous: [Normal] * n_pred_step, each of shape (bs, feature_dim)
-            else: [[OneHotCategorical / Normal]  * feature_dim] * n_pred_step, each of shape (bs, feature_i_dim)
+            else: [[OneHotCategorical / Normal] * feature_dim] * n_pred_step, each of shape (bs, feature_i_dim)
             notice that bs can be a multi-dimensional batch size
         :return:
             if state space is continuous: Normal distribution of shape (bs, n_pred_step, feature_dim)
@@ -105,6 +107,9 @@ class Inference(nn.Module):
                     # (bs, n_pred_step, feature_i_dim)
                     logits = torch.stack([dist[i].logits for dist in dist_list], dim=-2)
                     stacked_dist_i = OneHotCategorical(logits=logits)
+                elif isinstance(dist_i, torch.Tensor):
+                    # (bs, n_pred_step, feature_i_dim)
+                    stacked_dist_i = torch.stack([dist[i] for dist in dist_list], dim=-2)
                 else:
                     raise NotImplementedError
                 stacked_dist_list.append(stacked_dist_i)
@@ -139,7 +144,7 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=True)
+                        sample_i = F.gumbel_softmax(logits, hard=False)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
@@ -259,7 +264,7 @@ class Inference(nn.Module):
             else:
                 if self.training:
                     # KL loss between two OneHotCategorical distributions
-                    next_feature = [OneHotCategorical(probs=next_feature_i)                # a list of distributions, [OneHotCategorical] * feature_dim,
+                    next_feature = [OneHotCategorical(probs=next_feature_i)                # [OneHotCategorical] * feature_dim,
                                     for next_feature_i in next_feature]                    # each of shape (bs, n_pred_step, feature_i_dim)
                     pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
                                  for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
@@ -269,7 +274,7 @@ class Inference(nn.Module):
                     #                 for next_feature_i in next_feature]
                     # pred_dist = [pred_dist_i.probs.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
                     #              for pred_dist_i in pred_dist]
-                    # pred_loss = [self.CEloss(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
+                    # pred_loss = [self.loss_ce(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
                     pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
