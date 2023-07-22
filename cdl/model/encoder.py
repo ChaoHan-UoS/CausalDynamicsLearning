@@ -14,6 +14,7 @@ def tie_weights(src, trg):
     trg.weight = src.weight
     trg.bias = src.bias
 
+##
 class RewardEncoder(Net):
     def __init__(self, params, *args, **kwargs):
         super().__init__(*args, **kwargs)
