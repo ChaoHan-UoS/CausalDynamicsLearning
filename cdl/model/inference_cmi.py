@@ -12,7 +12,7 @@ from model.inference import Inference
 from model.inference_utils import reset_layer, forward_network, forward_network_batch, get_state_abstraction
 from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
-from model.encoder import IdentityEncoder
+# from model.encoder import IdentityEncoder
 
 class InferenceCMI(Inference):
     def __init__(self, encoder, params):
@@ -29,7 +29,7 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
-        self.encoder_iden = IdentityEncoder(params)
+        # self.encoder_iden = IdentityEncoder(params)
 
         # print('\nTrainable parameters within InferenceCMI class')
         # for name, value in self.named_parameters():
@@ -524,7 +524,7 @@ class InferenceCMI(Inference):
         sa_feature_cache = []
 
         if not self.continuous_action:
-            actions = F.one_hot(actions.squeeze(dim=-1), self.action_dim).float()   # (bs, n_pred_step, action_dim)
+            actions = F.one_hot(actions.squeeze(dim=-1).long(), self.action_dim).float()   # (bs, n_pred_step, action_dim)
 
         actions = torch.unbind(actions, dim=-2)                                     # [(bs, action_dim)] * n_pred_step
         for i, action in enumerate(actions):

@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
-    "goal_keys": ["target_obj0", "target_obj1", "target_obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -60,7 +60,7 @@
     "training_params": {
         "inference_algo": "cmi",
         "rl_algo": "random",
-        "load_inference": "/home/chao/PycharmProjects/CausalDynamicsLearning/rslts/dynamics/chemical_full_dynamics_cmi_2023_06_07_18_24_26/trained_models/inference_40000",
+        "load_inference": "",
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
