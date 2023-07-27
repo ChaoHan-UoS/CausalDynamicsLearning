@@ -64,8 +64,8 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 40000,
-        "enc_pretrain_steps": 30000,
+        "total_steps": 60000,
+        "enc_pretrain_steps": 50000,
         "init_steps": 10000,
         "collect_env_step": true,
         "supervised_encoder": false,
@@ -91,10 +91,18 @@
             "hidden_layer_size": 128
          }
     },
+        "decoder_params": {
+        "decoder_type": "feedforward",
+         "feedforward_dec_params": {
+            "hidden_layer_size": 128
+         }
+    },
     "inference_params": {
         "n_pred_step": 2,
         "batch_size": 128,
         "lr": 3e-4,
+        "lr_scheduler_step_size": 100,
+        "lr_scheduler_gamma": 0.99,
         "train_prop": 0.9,
         "residual": true,
         "log_std_min": -20,

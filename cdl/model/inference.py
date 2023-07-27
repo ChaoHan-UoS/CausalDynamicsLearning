@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
 import torch.nn.functional as F
 
 from torch.distributions.normal import Normal
@@ -17,10 +18,11 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, params):
+    def __init__(self, encoder, decoder1, params):
         super(Inference, self).__init__()
 
         self.encoder = encoder
+        # self.decoder = decoder
 
         self.params = params
         self.device = device = params.device
@@ -37,9 +39,12 @@ class Inference(nn.Module):
 
         self.abstraction_quested = False
 
-        self.CEloss = nn.CrossEntropyLoss(reduction='none')
+        self.loss_mse = nn.MSELoss(reduction='none')
+        self.loss_ce = nn.CrossEntropyLoss(reduction='none')
         self.to(device)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
+        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
+                                             gamma=inference_params.lr_scheduler_gamma, verbose=True)
 
         self.load(params.training_params.load_inference, device)
         self.train()
@@ -105,6 +110,9 @@ class Inference(nn.Module):
                     # (bs, n_pred_step, feature_i_dim)
                     logits = torch.stack([dist[i].logits for dist in dist_list], dim=-2)
                     stacked_dist_i = OneHotCategorical(logits=logits)
+                elif isinstance(dist_i, torch.Tensor):
+                    # (bs, n_pred_step, feature_i_dim)
+                    stacked_dist_i = torch.stack([dist[i] for dist in dist_list], dim=-2)
                 else:
                     raise NotImplementedError
                 stacked_dist_list.append(stacked_dist_i)
@@ -269,7 +277,7 @@ class Inference(nn.Module):
                     #                 for next_feature_i in next_feature]
                     # pred_dist = [pred_dist_i.probs.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
                     #              for pred_dist_i in pred_dist]
-                    # pred_loss = [self.CEloss(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
+                    # pred_loss = [self.loss_ce(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
                     pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)

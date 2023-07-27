@@ -178,7 +178,7 @@ def plot_adjacency_intervention_mask(params, model, writer, step):
     writer.add_figure("adjacency", fig, step + 1)
     plt.close("all")
 
-
+'''
 def plot_disentanglement(params, encoder, decoder, replay_buffer, writer, step):
     assert params.encoder_params.encoder_type == "conv" and decoder is not None
 
@@ -265,3 +265,5 @@ def plot_disentanglement(params, encoder, decoder, replay_buffer, writer, step):
         fig.tight_layout()
         writer.add_figure("interpolation_feature_{}".format(i + 1), fig, step + 1)
         plt.close("all")
+'''
+

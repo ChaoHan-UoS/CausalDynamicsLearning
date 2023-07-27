@@ -24,6 +24,7 @@ from model.hippo import HiPPO
 from model.model_based import ModelBased
 
 from model.encoder import make_encoder
+from model.decoder import rew_decoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
     get_start_step_from_model_loading, preprocess_obs, postprocess_obs
@@ -75,8 +76,8 @@ def sample_process(batch_data, params):
 
 
 def train(params):
-    device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")
+    # device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     set_seed_everywhere(params.seed)
 
     params.device = device
@@ -107,10 +108,13 @@ def train(params):
     # init model
     update_obs_act_spec(env, params)
     encoder = make_encoder(params)
-    decoder = None
+    decoder1 = rew_decoder(params)
+    # linear_layer = nn.Linear(1, 1)
+    # x = torch.randn(1, 1)
+    # decoder = None
 
-    criterion = nn.NLLLoss()
-    optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
+    # criterion = nn.NLLLoss()
+    # optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -126,7 +130,7 @@ def train(params):
         Inference = InferenceCMI
     else:
         raise NotImplementedError
-    inference = Inference(encoder, params)
+    inference = Inference(encoder, decoder1, params)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -195,8 +199,9 @@ def train(params):
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
         is_enc_pretrain = 0 <= step - training_params.init_steps < training_params.enc_pretrain_steps
-        print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
-                                                                      is_enc_pretrain))
+        if (step + 1) % 100 == 0:
+            print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
+                                                                          is_enc_pretrain))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -332,8 +337,9 @@ def train(params):
                 batch_data, _ = buffer_train.sample(inference_params.batch_size)
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch =\
                     sample_process(batch_data, params)
-                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch)
+                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch)
                 loss_details["inference"].append(loss_detail)
+
             # print('Parameters in inference (train mode)')
             # for name, value in inference.named_parameters():
             #     print(name, value)
@@ -354,9 +360,12 @@ def train(params):
                     batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     loss_detail = inference.update(batch_data.obs, batch_data.act, batch_data.obs_next, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
+
             # print('Parameters in inference (eval mode)')
             # for name, value in inference.named_parameters():
             #     print(name, value)
+
+            inference.scheduler.step()
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()

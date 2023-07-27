@@ -15,10 +15,10 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 # from model.encoder import IdentityEncoder
 
 class InferenceCMI(Inference):
-    def __init__(self, encoder, params):
+    def __init__(self, encoder, decoder1, params):
         self.cmi_params = params.inference_params.cmi_params
         self.init_graph(params, encoder)
-        super(InferenceCMI, self).__init__(encoder, params)
+        super(InferenceCMI, self).__init__(encoder, decoder1, params)
         self.causal_pred_reward_mean = 0
         self.causal_pred_reward_std = 1
         self.pred_diff_reward_std = 1
@@ -521,6 +521,7 @@ class InferenceCMI(Inference):
             assert mask is not None
 
         full_dists, masked_dists, causal_dists = [], [], []
+        full_features, masked_features, causal_features = [], [], []
         sa_feature_cache = []
 
         if not self.continuous_action:
@@ -553,25 +554,37 @@ class InferenceCMI(Inference):
             masked_dists.append(masked_dist)
             causal_dists.append(causal_dist)
 
+            full_features.append(full_feature)
+            masked_features.append(masked_feature)
+            causal_features.append(causal_feature)
+
             sa_feature_cache.append((self.action_feature, self.full_state_feature))
 
         if self.use_cache and self.sa_feature_cache is None:
             self.sa_feature_cache = sa_feature_cache
 
+        # full_dists / masked_dists / causal_dists:
+        # [[OneHotCategorical / Normal] * feature_dim] * n_pred_step, each of shape (bs, feature_i_dim)
         dists = [full_dists, masked_dists, causal_dists]
+        features = [full_features, masked_features, causal_features]
         result_dists = []
+        result_features = []
         for mode in forward_mode:
-            dist = dists[modes.index(mode)]
-            dist = self.stack_dist(dist)
+            dist, feature = dists[modes.index(mode)], features[modes.index(mode)]
+            dist, feature = self.stack_dist(dist), self.stack_dist(feature)
             if reshaped:
                 dist = self.restore_batch_size_shape(dist, bs)
+                feature = self.restore_batch_size_shape(feature, bs)
             result_dists.append(dist)
+            result_features.append(feature)
 
         if len(forward_mode) == 1:
-            return result_dists[0]
+            return result_dists[0], result_features[0]
 
-        # a list of 3, each of [OneHotCategorical / Normal] * feature_dim, each of shape (bs, n_pred_step, feature_i_dim)
-        return result_dists
+        # result_dists: [[OneHotCategorical / Normal] * feature_dim] * len(forward_mode),
+        # each of shape (bs, n_pred_step, feature_i_dim)
+        # result_features: multi-step softmax samples
+        return result_dists, result_features
 
     def restore_batch_size_shape(self, dist, bs):
         # restore multi-dimensional batch size
@@ -636,6 +649,7 @@ class InferenceCMI(Inference):
         calculate total prediction loss for full, masked and/or causal prediction distributions
         if use CNN encoder: prediction loss = KL divergence
         else: prediction loss = -log_prob
+
         :param pred_next_dist:
             a list of prediction distributions under different prediction mode,
             where each element is the next step value for all state variables in the format of distribution as follows,
@@ -651,17 +665,19 @@ class InferenceCMI(Inference):
                 a tensor of shape (bs, n_pred_step, feature_dim)
             else:
                 a list of tensors, [(bs, n_pred_step, feature_i_dim)] * feature_dim
-        :return: prediction loss and {"loss_name": loss_value}
+
+        :return pred_loss: scalar tensor
+                pred_loss_detail: {"loss_name": loss_value}
         """
         pred_losses = [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
-                       for pred_next_dist_i in pred_next_dist]              # [(bs, n_pred_step)] * 3
+                       for pred_next_dist_i in pred_next_dist]  # [(bs, n_pred_step)] * 3
 
         if len(pred_losses) == 2:
             pred_losses.append(None)
         assert len(pred_losses) == 3
         full_pred_loss, masked_pred_loss, causal_pred_loss = pred_losses
 
-        full_pred_loss = full_pred_loss.sum(dim=-1).mean()                  # sum over n_pred_step then average over bs
+        full_pred_loss = full_pred_loss.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
         masked_pred_loss = masked_pred_loss.sum(dim=-1).mean()
 
         pred_loss = full_pred_loss + masked_pred_loss
@@ -676,17 +692,59 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def update(self, obs, actions, next_obses, eval=False):
+    def rec_loss_from_feature(self, feature, rew):
         """
-        Old:
-        :param obs: {obs_i_key: (bs, obs_i_shape)}
-        :param actions: (bs, n_pred_step, action_dim)
-        :param next_obses: {obs_i_key: (bs, n_pred_step, obs_i_shape)}
+        calculate reconstruction loss from decoded reward(s)
+        :param feature: [(bs, (n_pred_step), num_colors)] * feature_dim
+        :param rew: (bs, (n_pred_step), reward_dim)
+        :return rec_loss: scalar tensor
+                rec_loss_detail: {"loss_name": loss_value}
+        """
+        # rew_feature = self.decoder(feature)  # (bs, (n_pred_step), reward_dim)
+        # rec_loss = self.loss_mse(rew_feature, rew)  # (bs, (n_pred_step), reward_dim)
+        # if len(rec_loss.shape) == 3:
+        #     rec_loss = rec_loss.sum(dim=(-2, -1)).mean()  # sum over n_pred_step and reward_dim then average over bs
+        #     rec_loss_detail = {"next_rec_loss": rec_loss}
+        # else:
+        #     rec_loss = rec_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
+        #     rec_loss_detail = {"rec_loss": rec_loss}
+        #
+        # return rec_loss, rec_loss_detail
+        return None
 
-        New:
+    def prediction_loss_from_multi_feature(self, pred_next_feature, next_rew):
+        """
+        calculate total prediction reward loss for full, masked and/or causal sampled features
+        :param pred_next_feature: [(bs, n_pred_step, feature_i_dim) * feature_dim] * len(forward_mode)
+        :param next_rew: (bs, n_pred_step, reward_dim)
+        :return pred_loss: scalar tensor
+                pred_loss_detail: {"loss_name": loss_value}
+        """
+        # [scalar tensor] * len(forward_mode)
+        pred_losses = [self.rec_loss_from_feature(pred_next_feature_i, next_rew)[0]
+                       for pred_next_feature_i in pred_next_feature]
+
+        if len(pred_losses) == 2:
+            pred_losses.append(None)
+        assert len(pred_losses) == 3
+        full_pred_loss, masked_pred_loss, causal_pred_loss = pred_losses
+
+        pred_loss = full_pred_loss
+        pred_loss_detail = {"full_pred_loss_rew": full_pred_loss}
+
+        if causal_pred_loss is not None:
+            pred_loss += causal_pred_loss
+            pred_loss_detail["causal_pred_loss_rew"] = causal_pred_loss
+
+        return pred_loss, pred_loss_detail
+
+    def update(self, obs, actions, next_obses, rew, next_rews, eval=False):
+        """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, n_pred_step, action_dim)  # not one-hot representation
         :param next_obses: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
+        :param rew: (bs, reward_dim)
+        :param next_rews: (bs, n_pred_step, reward_dim)
 
         :return: {"loss_name": loss_value}
         """
@@ -697,7 +755,7 @@ class InferenceCMI(Inference):
         # forward_mode = ("full", "masked")
         forward_mode = ("full", "masked", "causal")
         bs = actions.size(0)
-        mask = self.get_training_mask(bs)                           # (bs, feature_dim, feature_dim + 1)
+        mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
         feature, feature_target = self.encoder(obs)  # feature: [(bs, num_colors)] * num_objects
         next_feature, next_feature_target = self.encoder(next_obses)  # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
@@ -709,21 +767,38 @@ class InferenceCMI(Inference):
         actions_neg = actions[perm]
         mask_neg = mask[perm]
 
-        pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
-        pred_next_dist_neg = self.forward_with_feature(feature_neg, actions_neg, mask_neg, forward_mode=forward_mode)
+        # pred_next_feature: softmax samples from pred_next_dist
+        pred_next_dist, pred_next_feature = \
+            self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
+        pred_next_dist_neg, pred_next_feature_neg = \
+            self.forward_with_feature(feature_neg, actions_neg, mask_neg, forward_mode=forward_mode)
 
         # prediction loss in the state / latent space, (bs, n_pred_step)
         if not self.update_num % (eval_freq * inference_gradient_steps):
-            pred_next_dist = pred_next_dist[:2]                     # only consider full and masked distributions when updating causal mask
+            pred_next_dist = pred_next_dist[:2]  # only consider full and masked distributions when updating causal mask
             pred_next_dist_neg = pred_next_dist_neg[:2]
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
         pred_loss_neg, _ = self.prediction_loss_from_multi_dist(pred_next_dist_neg, next_feature)
         pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
         # print(pred_loss_neg)
 
-        loss = pred_loss + pred_loss_neg
-        # loss = pred_loss
+        # rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
+        # next_rec_loss, next_rec_loss_detail = self.rec_loss_from_feature(next_feature + next_feature_target, next_rews)
+        # next_feature_target_multi = [next_feature_target for _ in range(3)]
+        # pred_next_feature_target = [pred_next_feature_i + next_feature_target_multi_i
+        #                             for pred_next_feature_i, next_feature_target_multi_i in
+        #                             zip(pred_next_feature, next_feature_target_multi)]
+        # rec_pred_loss, rec_pred_loss_detail = \
+        #     self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
 
+        # loss = pred_loss
+        # loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
+        # loss = rec_loss
+        loss = pred_loss + pred_loss_neg
+
+        # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
+        # loss_detail = {**rec_loss_detail}
+        loss_detail = {**loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
 
@@ -754,14 +829,14 @@ class InferenceCMI(Inference):
                 # print(i, mask)
                 if i == 0:
                     # pred_next_dists = self.forward_with_feature(feature, actions, mask, forward_mode=("full", "masked"))
-                    pred_next_dists = self.forward_with_feature(feature, actions, mask)
+                    pred_next_dists, _ = self.forward_with_feature(feature, actions, mask)
                     # pred_loss: (bs, n_pred_step, feature_dim)
                     # full_pred_loss, masked_pred_loss = \
                     full_pred_loss, masked_pred_loss, eval_pred_loss = \
                         [self.prediction_loss_from_dist(pred_next_dist_i, next_feature, keep_variable_dim=True)
                          for pred_next_dist_i in pred_next_dists]
                 else:
-                    pred_next_dist = self.forward_with_feature(feature, actions, mask, forward_mode=("masked",))
+                    pred_next_dist, _ = self.forward_with_feature(feature, actions, mask, forward_mode=("masked",))
                     # pred_loss: (bs, n_pred_step, feature_dim)
                     masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature,
                                                                       keep_variable_dim=True)

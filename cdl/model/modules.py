@@ -30,7 +30,7 @@ class Reshape(nn.Module):
         assert x.shape[-1] == self.dim
         return x.view(*x.shape[:-1], *self.shape)
 
-
+"""
 def get_backbone(params, encoding, verbose=False):
     encoder_params = params.encoder_params
     decoder_params = params.decoder_params
@@ -124,3 +124,5 @@ def get_backbone(params, encoding, verbose=False):
         output_shape = (c, h, w)
 
     return nn.Sequential(*module_list), output_shape
+"""
+
