@@ -21,7 +21,7 @@ def reparameterize(mu, log_std):
     return eps * std + mu
 
 
-def forward_network(input, weights, biases, activation=F.relu):
+def forward_network(input, weights, biases, activation=F.relu, dropout=nn.Dropout(p=0)):
     """
     given an input and a multi-layer networks (i.e., a list of weights and a list of biases),
         apply the network to each input, and return output
@@ -35,10 +35,11 @@ def forward_network(input, weights, biases, activation=F.relu):
         x = torch.bmm(x, w) + b
         if i < len(weights) - 1 and activation:
             x = activation(x)
+            x = dropout(x)
     return x
 
 
-def forward_network_batch(inputs, weights, biases, activation=F.relu):
+def forward_network_batch(inputs, weights, biases, activation=F.relu, dropout=nn.Dropout(p=0)):
     """
     given a list of inputs and a list of ONE-LAYER networks (i.e., a list of weights and a list of biases),
         apply each network to each input, and return a list
@@ -51,6 +52,7 @@ def forward_network_batch(inputs, weights, biases, activation=F.relu):
         x_i = torch.bmm(x_i, w) + b
         if activation:
             x_i = activation(x_i)
+            x_i = dropout(x_i)
         x.append(x_i)
     return x
 

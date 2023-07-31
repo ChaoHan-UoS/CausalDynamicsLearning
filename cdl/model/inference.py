@@ -45,6 +45,7 @@ class Inference(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
         self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
                                              gamma=inference_params.lr_scheduler_gamma, verbose=True)
+        self.dropout = nn.Dropout(p=inference_params.dropout)
 
         self.load(params.training_params.load_inference, device)
         self.train()

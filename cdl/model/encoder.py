@@ -60,9 +60,29 @@ class IdentityEncoder(nn.Module):
             return obs[:len(self.params.obs_keys_f)], obs
 
 
-class RecurrentEncoder(Recurrent):
+class RNN(nn.Module):
+    def __init__(self, params, obs_shape, hidden_layer_size, layer_num, logit_shape):
+        super().__init__()
+        dropout = params.encoder_params.recurrent_enc_params.dropout
+        self.fc1 = nn.Linear(obs_shape, hidden_layer_size)
+        self.lstm = nn.LSTM(hidden_layer_size, hidden_layer_size, layer_num, batch_first=True, dropout=dropout)
+        self.fc2 = nn.Linear(hidden_layer_size, logit_shape)
+
+    def forward(self, obs, s_0=None):
+        obs = self.fc1(obs)
+        self.lstm.flatten_parameters()
+        if s_0 is None:
+            obs, (h_n, c_n) = self.lstm(obs)
+        else:
+            obs, (h_n, c_n) = self.lstm(obs, s_0)
+        obs = self.fc2(obs[:, -1])
+
+        return obs, (h_n.detach(), c_n.detach())
+
+
+class RecurrentEncoder(RNN):
     def __init__(self, params, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(params, *args, **kwargs)
 
         chemical_env_params = params.env_params.chemical_env_params
         self.hidden_objects_ind = chemical_env_params.hidden_objects_ind
@@ -91,9 +111,8 @@ class RecurrentEncoder(Recurrent):
         if not self.continuous_state:
             self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
-        self.to(params.device)
 
-    def forward(self, obs, s_0=None, info={}, detach=False):
+    def forward(self, obs, s_0=None):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
         :return: [(bs, (n_pred_step), num_colors)] * num_objects
@@ -149,7 +168,7 @@ class RecurrentEncoder(Recurrent):
                                  zip(obs_obs_pred_step, obs_act_pred_step)]
                 obs_enc = []
                 for obs_i in obs_pred_step:
-                    obs_enc_i, s_n = super().forward(obs_i, s_0, info)  # obs_enc with shape (bs, logit_shape)
+                    obs_enc_i, s_n = super().forward(obs_i, s_0)  # obs_enc with shape (bs, logit_shape)
                     s_0 = s_n
 
                     obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
@@ -166,7 +185,7 @@ class RecurrentEncoder(Recurrent):
                 # (bs, stack_num, num_dset_observables * num_colors + action_dim)
                 obs = torch.cat((obs_obs, obs_act), dim=-1)
 
-                obs_enc, s_n = super().forward(obs, s_0, info)  # obs_enc with shape (bs, logit_shape)
+                obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
                 obs_enc = F.gumbel_softmax(obs_enc, hard=False) if self.training \
                     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
@@ -194,14 +213,14 @@ def make_encoder(params):
     if encoder_type == "recurrent":
         recurrent_enc_params = params.encoder_params.recurrent_enc_params
         chemical_env_params = params.env_params.chemical_env_params
-        layer_num = recurrent_enc_params.layer_num
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
         obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
-        # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape =  len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
-        device = params.device
         hidden_layer_size = recurrent_enc_params.hidden_layer_size
-        encoder = RecurrentEncoder(params, layer_num, obs_shape, logit_shape, device, hidden_layer_size)
+        layer_num = recurrent_enc_params.layer_num
+        # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
+        logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
+        device = params.device
+        encoder = RecurrentEncoder(params, obs_shape, hidden_layer_size, layer_num, logit_shape).to(device)
         # print('\nTrainable parameters of the recurrent encoder')
         # for name, value in encoded_obs.named_parameters():
         #     print(name, value.shape)

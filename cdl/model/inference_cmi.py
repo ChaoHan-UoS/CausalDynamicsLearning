@@ -163,7 +163,10 @@ class InferenceCMI(Inference):
         """
         action = action.unsqueeze(dim=0)                                    # (1, bs, action_dim)
         action = action.expand(self.feature_dim, -1, -1)                    # (feature_dim, bs, action_dim)
-        action_feature = forward_network(action, self.action_feature_weights, self.action_feature_biases)  # (feature_dim, bs, feature_fc_dims[0])
+        action_feature = forward_network(action,
+                                         self.action_feature_weights,
+                                         self.action_feature_biases,
+                                         dropout=self.dropout)              # (feature_dim, bs, feature_fc_dims[0])
         return action_feature.unsqueeze(dim=1)                              # (feature_dim, 1, bs, out_dim)
 
     def extract_state_feature(self, feature):
@@ -191,11 +194,12 @@ class InferenceCMI(Inference):
                 reshaped_feature.append(f_i)
             x = forward_network_batch(reshaped_feature,
                                       self.state_feature_1st_layer_weights,
-                                      self.state_feature_1st_layer_biases)
+                                      self.state_feature_1st_layer_biases,
+                                      dropout=self.dropout)
             x = torch.stack(x, dim=1)                                       # (feature_dim, feature_dim, bs, out_dim)
             x = x.view(feature_dim * feature_dim, *x.shape[2:])             # (feature_dim * feature_dim, bs, out_dim)
 
-        state_feature = forward_network(x, self.state_feature_weights, self.state_feature_biases)
+        state_feature = forward_network(x, self.state_feature_weights, self.state_feature_biases, dropout=self.dropout)
         state_feature = state_feature.view(feature_dim, feature_dim, bs, -1)
         return state_feature                                                # (feature_dim, feature_dim, bs, out_dim)
 
@@ -220,13 +224,15 @@ class InferenceCMI(Inference):
             masked_feature = [f_i.unsqueeze(dim=0) for f_i in masked_feature]
             x = forward_network_batch(masked_feature,
                                       [w[i:i+1] for i, w in enumerate(self.state_feature_1st_layer_weights)],
-                                      [b[i:i+1] for i, b in enumerate(self.state_feature_1st_layer_biases)])
+                                      [b[i:i+1] for i, b in enumerate(self.state_feature_1st_layer_biases)],
+                                      dropout=self.dropout)
             x = torch.cat(x, dim=0)                                         # (feature_dim, bs, out_dim)
 
         idxes = [i * (feature_dim + 1) for i in range(feature_dim)]
         x = forward_network(x,
                             [w[idxes] for w in self.state_feature_weights],
-                            [b[idxes] for b in self.state_feature_biases])  # (feature_dim, bs, out_dim)
+                            [b[idxes] for b in self.state_feature_biases],
+                            dropout=self.dropout)                           # (feature_dim, bs, out_dim)
 
         feature_diag_mask = self.feature_diag_mask                          # (feature_dim, feature_dim, 1, 1)
         masked_state_feature = x.unsqueeze(dim=0)                           # (1, feature_dim, bs, out_dim)
@@ -256,7 +262,8 @@ class InferenceCMI(Inference):
             generative_last_layer_weights = self.generative_last_layer_weights
             generative_last_layer_biases = self.generative_last_layer_biases
 
-        x = forward_network(sa_feature, generative_weights, generative_biases)  # (feature_dim, bs, out_dim)
+        x = forward_network(sa_feature, generative_weights,
+                            generative_biases, dropout=self.dropout)        # (feature_dim, bs, out_dim)
 
         if self.continuous_state:
             x = x.permute(1, 0, 2)                                          # (bs, feature_dim, 2)
@@ -268,7 +275,8 @@ class InferenceCMI(Inference):
             x = forward_network_batch(x,
                                       generative_last_layer_weights,
                                       generative_last_layer_biases,
-                                      activation=None)                      # [(1, bs, feature_inner_dim_i)] * feature_dim
+                                      activation=None,
+                                      dropout=self.dropout)                 # [(1, bs, feature_inner_dim_i)] * feature_dim
 
             feature_inner_dim = self.feature_inner_dim
             if abstraction_mode:
@@ -371,7 +379,8 @@ class InferenceCMI(Inference):
         # (num_action_children, bs, out_dim)
         action_feature = forward_network(action,
                                          self.abstraction_action_feature_weights,
-                                         self.abstraction_action_feature_biases)
+                                         self.abstraction_action_feature_biases,
+                                         dropout=self.dropout)
         action_feature = action_feature.unsqueeze(dim=1)                    # (num_action_children, 1, bs, out_dim)
         action_feature = torch.unbind(action_feature, dim=0)                # [(1, bs, out_dim)] * num_action_children
         action_feature_dict = {idx: action_feature_i
@@ -404,13 +413,15 @@ class InferenceCMI(Inference):
                 state_feature_1st_layer_biases = self.abstraction_state_feature_1st_layer_biases[idx]
                 x = forward_network_batch(x,
                                           state_feature_1st_layer_weights,
-                                          state_feature_1st_layer_biases)       # [(1, bs, out_dim)] * num_parent
+                                          state_feature_1st_layer_biases,
+                                          dropout=self.dropout)                 # [(1, bs, out_dim)] * num_parent
                 features.extend(x)
         features = torch.cat(features, dim=0)                                   # (total_num_parent, bs, 1)
 
         state_feature = forward_network(features,
                                         self.abstraction_state_feature_weights,
-                                        self.abstraction_state_feature_biases)
+                                        self.abstraction_state_feature_biases,
+                                        dropout=self.dropout)
 
         state_feature_dict = {}
         offset = 0

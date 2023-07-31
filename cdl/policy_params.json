@@ -88,7 +88,8 @@
         "encoder_type": "recurrent",
          "recurrent_enc_params": {
             "layer_num": 2,
-            "hidden_layer_size": 128
+            "hidden_layer_size": 128,
+            "dropout": 0
          }
     },
         "decoder_params": {
@@ -103,6 +104,7 @@
         "lr": 3e-4,
         "lr_scheduler_step_size": 100,
         "lr_scheduler_gamma": 0.99,
+        "dropout": 0,
         "train_prop": 0.9,
         "residual": true,
         "log_std_min": -20,
