@@ -60,24 +60,95 @@ class IdentityEncoder(nn.Module):
             return obs[:len(self.params.obs_keys_f)], obs
 
 
+class LSTMCell(nn.Module):
+    def __init__(self, num_inputs, num_hiddens, sigma=0.01):
+        super().__init__()
+        self.num_inputs = num_inputs
+        self.num_hiddens = num_hiddens
+        init_weight = lambda *shape: nn.Parameter(torch.randn(*shape) * sigma)
+        triple = lambda: (init_weight(num_inputs, num_hiddens),
+                          init_weight(num_hiddens, num_hiddens),
+                          nn.Parameter(torch.zeros(num_hiddens)))
+        self.w_xi, self.w_hi, self.b_i = triple()  # Input gate
+        self.w_xf, self.w_hf, self.b_f = triple()  # Forget gate
+        self.w_xo, self.w_ho, self.b_o = triple()  # Output gate
+        self.w_xc, self.w_hc, self.b_c = triple()  # Input node
+        # self.layer_norm = nn.LayerNorm(num_hiddens)
+
+    def forward(self, x, s_0=None):
+        """
+        :param x: (bs, num_inputs)
+        :param s_0: ((bs, (bs, num_hiddens))) * 2
+        :return: h: (bs, num_hiddens)
+                 c: (bs, num_hiddens)
+        """
+        if s_0 is None:
+            h_0 = torch.zeros((x.shape[0], self.num_hiddens), device=x.device)  # (bs, num_hiddens)
+            c_0 = torch.zeros((x.shape[0], self.num_hiddens), device=x.device)
+        else:
+            h_0, c_0 = s_0
+        i = torch.sigmoid(torch.matmul(x, self.w_xi) +
+                          torch.matmul(h_0, self.w_hi) + self.b_i)
+        f = torch.sigmoid(torch.matmul(x, self.w_xf) +
+                          torch.matmul(h_0, self.w_hf) + self.b_f)
+        o = torch.sigmoid(torch.matmul(x, self.w_xo) +
+                          torch.matmul(h_0, self.w_ho) + self.b_o)
+        c_tilde = torch.tanh(torch.matmul(x, self.w_xc) +
+                             torch.matmul(h_0, self.w_hc) + self.b_c)
+        c = f * c_0 + i * c_tilde  # (bs, num_hiddens)
+        c = F.layer_norm(c, normalized_shape=(self.num_hiddens,))
+        h = o * torch.tanh(c)  # (bs, num_hiddens)
+        return h, c
+
+
 class RNN(nn.Module):
     def __init__(self, params, obs_shape, hidden_layer_size, layer_num, logit_shape):
         super().__init__()
         dropout = params.encoder_params.recurrent_enc_params.dropout
+        self.device = params.device
+        self.obs_shape = obs_shape
+        self.hidden_layer_size = hidden_layer_size
         self.fc1 = nn.Linear(obs_shape, hidden_layer_size)
-        self.lstm = nn.LSTM(hidden_layer_size, hidden_layer_size, layer_num, batch_first=True, dropout=dropout)
+        self.lstmcell1 = LSTMCell(hidden_layer_size, hidden_layer_size)
+        self.lstmcell2 = LSTMCell(hidden_layer_size, hidden_layer_size)
+        # self.layer_norm = nn.LayerNorm(hidden_layer_size)
+        self.dropout = nn.Dropout(dropout)
         self.fc2 = nn.Linear(hidden_layer_size, logit_shape)
 
     def forward(self, obs, s_0=None):
-        obs = self.fc1(obs)
-        self.lstm.flatten_parameters()
+        """
+        :param obs: (bs, stack_num, obs_shape)
+        :param s_0: ((layer_num, bs, hidden_layer_size)) * 2
+        :return: logit: (bs, logit_shape)
+                 h_n: (layer_num, bs, hidden_layer_size)
+                 c_n: (layer_num, bs, hidden_layer_size)
+        """
+        bs = obs.shape[0]
+        seq_len = obs.shape[1]
+        obs = self.fc1(obs)  # (bs, stack_num, hidden_layer_size)
         if s_0 is None:
-            obs, (h_n, c_n) = self.lstm(obs)
+            h_l0 = torch.zeros(bs, self.hidden_layer_size).to(self.device)
+            c_l0 = torch.zeros(bs, self.hidden_layer_size).to(self.device)
+            h_l1 = torch.zeros(bs, self.hidden_layer_size).to(self.device)
+            c_l1 = torch.zeros(bs, self.hidden_layer_size).to(self.device)
         else:
-            obs, (h_n, c_n) = self.lstm(obs, s_0)
-        obs = self.fc2(obs[:, -1])
+            h_0, c_0 = s_0  # (layer_num, bs, hidden_layer_size)
+            h_l0, c_l0 = h_0[0], c_0[0]  # (bs, hidden_layer_size)
+            h_l1, c_l1 = h_0[1], c_0[1]
+        for t in range(seq_len):
+            # first lstm layer
+            h_l0, c_l0 = self.lstmcell1(obs[:, t], (h_l0, c_l0))  # (bs, hidden_layer_size)
+            # h_l0 = self.layer_norm(h_l0)
+            h_l0 = self.dropout(h_l0)
 
-        return obs, (h_n.detach(), c_n.detach())
+            # second lstm layer
+            h_l1, c_l1 = self.lstmcell2(h_l0, (h_l1, c_l1))
+            # h_l1 = self.layer_norm(h_l1)
+            h_l1 = self.dropout(h_l1)
+        logit = self.fc2(h_l1)  # (bs, logit_shape)
+        h_n = torch.stack((h_l0, h_l1), dim=0)  # (layer_num, bs, hidden_layer_size)
+        c_n = torch.stack((c_l0, c_l1), dim=0)  # (layer_num, bs, hidden_layer_size)
+        return logit, (h_n.detach(), c_n.detach())
 
 
 class RecurrentEncoder(RNN):

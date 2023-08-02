@@ -34,6 +34,7 @@ def forward_network(input, weights, biases, activation=F.relu, dropout=nn.Dropou
         # b (p_bs, 1, out_dim)
         x = torch.bmm(x, w) + b
         if i < len(weights) - 1 and activation:
+            x = F.layer_norm(x, normalized_shape=(x.shape[-1],))
             x = activation(x)
             x = dropout(x)
     return x
@@ -51,6 +52,7 @@ def forward_network_batch(inputs, weights, biases, activation=F.relu, dropout=nn
         # b (p_bs, 1, out_dim)
         x_i = torch.bmm(x_i, w) + b
         if activation:
+            x_i = F.layer_norm(x_i, normalized_shape=(x_i.shape[-1],))
             x_i = activation(x_i)
             x_i = dropout(x_i)
         x.append(x_i)
