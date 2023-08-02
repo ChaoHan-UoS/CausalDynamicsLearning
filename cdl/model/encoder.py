@@ -6,13 +6,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from tianshou.utils.net.common import Recurrent, Net
-from torch.distributions.one_hot_categorical import OneHotCategorical
+from model.inference_utils import reset_layer
+
 
 def tie_weights(src, trg):
     assert type(src) == type(trg)
     trg.weight = src.weight
     trg.bias = src.bias
+
+def reset_layer_lstm(w, b=None):
+    # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+    # uniform(-1/sqrt(in_features), 1/sqrt(in_features))
+    nn.init.kaiming_uniform_(w, a=np.sqrt(5))
+    # nn.init.kaiming_uniform_(w, nonlinearity='relu')
+    if b is not None:
+        fan_in = w.shape[1]
+        bound = 1 / np.sqrt(fan_in)
+        nn.init.uniform_(b, -bound, bound)
 
 
 class IdentityEncoder(nn.Module):
@@ -65,8 +75,10 @@ class LSTMCell(nn.Module):
         super().__init__()
         self.num_inputs = num_inputs
         self.num_hiddens = num_hiddens
+
+        # initialize weights with a normal distribution and biases with zeros
         init_weight = lambda *shape: nn.Parameter(torch.randn(*shape) * sigma)
-        triple = lambda: (init_weight(num_inputs, num_hiddens),
+        triple = lambda: (init_weight(num_hiddens, num_inputs),
                           init_weight(num_hiddens, num_hiddens),
                           nn.Parameter(torch.zeros(num_hiddens)))
         self.w_xi, self.w_hi, self.b_i = triple()  # Input gate
@@ -74,6 +86,17 @@ class LSTMCell(nn.Module):
         self.w_xo, self.w_ho, self.b_o = triple()  # Output gate
         self.w_xc, self.w_hc, self.b_c = triple()  # Input node
         # self.layer_norm = nn.LayerNorm(num_hiddens)
+        self.reset_params()
+
+    def reset_params(self):
+        reset_layer_lstm(self.w_xi, self.b_i)
+        reset_layer_lstm(self.w_hi)
+        reset_layer_lstm(self.w_xf, self.b_f)
+        reset_layer_lstm(self.w_hf)
+        reset_layer_lstm(self.w_xo, self.b_o)
+        reset_layer_lstm(self.w_ho)
+        reset_layer_lstm(self.w_xc, self.b_c)
+        reset_layer_lstm(self.w_hc)
 
     def forward(self, x, s_0=None):
         """
@@ -87,13 +110,13 @@ class LSTMCell(nn.Module):
             c_0 = torch.zeros((x.shape[0], self.num_hiddens), device=x.device)
         else:
             h_0, c_0 = s_0
-        i = torch.sigmoid(torch.matmul(x, self.w_xi) +
+        i = torch.sigmoid(torch.matmul(x, self.w_xi.T) +
                           torch.matmul(h_0, self.w_hi) + self.b_i)
-        f = torch.sigmoid(torch.matmul(x, self.w_xf) +
+        f = torch.sigmoid(torch.matmul(x, self.w_xf.T) +
                           torch.matmul(h_0, self.w_hf) + self.b_f)
-        o = torch.sigmoid(torch.matmul(x, self.w_xo) +
+        o = torch.sigmoid(torch.matmul(x, self.w_xo.T) +
                           torch.matmul(h_0, self.w_ho) + self.b_o)
-        c_tilde = torch.tanh(torch.matmul(x, self.w_xc) +
+        c_tilde = torch.tanh(torch.matmul(x, self.w_xc.T) +
                              torch.matmul(h_0, self.w_hc) + self.b_c)
         c = f * c_0 + i * c_tilde  # (bs, num_hiddens)
         c = F.layer_norm(c, normalized_shape=(self.num_hiddens,))
@@ -108,12 +131,18 @@ class RNN(nn.Module):
         self.device = params.device
         self.obs_shape = obs_shape
         self.hidden_layer_size = hidden_layer_size
+
         self.fc1 = nn.Linear(obs_shape, hidden_layer_size)
         self.lstmcell1 = LSTMCell(hidden_layer_size, hidden_layer_size)
         self.lstmcell2 = LSTMCell(hidden_layer_size, hidden_layer_size)
         # self.layer_norm = nn.LayerNorm(hidden_layer_size)
         self.dropout = nn.Dropout(dropout)
         self.fc2 = nn.Linear(hidden_layer_size, logit_shape)
+
+        # apply the same initialization scheme to linear layers in the encoder
+        # as those in the transition model
+        reset_layer(self.fc1.weight, self.fc1.bias)
+        reset_layer(self.fc2.weight, self.fc2.bias)
 
     def forward(self, obs, s_0=None):
         """

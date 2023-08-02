@@ -14,6 +14,7 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 # from model.encoder import IdentityEncoder
 
+
 class InferenceCMI(Inference):
     def __init__(self, encoder, decoder1, params):
         self.cmi_params = params.inference_params.cmi_params

@@ -74,7 +74,7 @@
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
-        "plot_freq": 5000,
+        "plot_freq": 2500,
         "replay_buffer_params": {
             "capacity": 500000,
             "max_sample_time": 128,
