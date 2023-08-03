@@ -122,7 +122,7 @@ class RecurrentEncoder(Recurrent):
             # identity encoder in the fully observable
             if len(self.hidden_ind) == 0:
                 obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-                return obs_enc
+                return obs_enc[:3], obs_enc[3:]
 
             """RNN fed by d-set"""
             obs = [obs_k_i
@@ -153,9 +153,13 @@ class RecurrentEncoder(Recurrent):
                                      torch.unbind(obs_rew, dim=-2)]  # [(bs, stack_num, reward_dim)] * n_pred_step
                 # concatenate one-hot observables, action and scalar reward along the last dim
                 # [(bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)] * n_pred_step
-                obs_pred_step = [torch.cat((obses_i, acts_i, rews_i), dim=-1)
-                                 for obses_i, acts_i, rews_i in
-                                 zip(obs_obs_pred_step, obs_act_pred_step, obs_rew_pred_step)]
+                # obs_pred_step = [torch.cat((obses_i, acts_i, rews_i), dim=-1)
+                #                  for obses_i, acts_i, rews_i in
+                #                  zip(obs_obs_pred_step, obs_act_pred_step, obs_rew_pred_step)]
+                # obs_pred_step = [torch.cat((obses_i, acts_i), dim=-1)
+                #                  for obses_i, acts_i in
+                #                  zip(obs_obs_pred_step, obs_act_pred_step)]
+                obs_pred_step = obs_obs_pred_step
                 obs_enc = []
                 for obs_i in obs_pred_step:
                     obs_enc_i, s_n = super().forward(obs_i, s_0, info)  # obs_enc with shape (bs, logit_shape)
@@ -172,7 +176,9 @@ class RecurrentEncoder(Recurrent):
                 obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_observables * num_colors)
                 # concatenate one-hot observables, action and scalar reward along the last dim
                 # (bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)
-                obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
+                # obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
+                # obs = torch.cat((obs_obs, obs_act), dim=-1)
+                obs = obs_obs
 
                 obs_enc, s_n = super().forward(obs, s_0, info)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
@@ -185,9 +191,13 @@ class RecurrentEncoder(Recurrent):
             num_hidden_objects = len(self.hidden_objects_ind)
             num_obs_objects = self.num_objects - len(self.hidden_objects_ind)
             # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-            obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
-                      + obs_obs_forward[self.hidden_objects_ind[0]:(num_obs_objects + self.hidden_targets_ind[0])] \
-                      + obs_enc[num_hidden_objects:] + obs_obs_forward[(num_obs_objects + self.hidden_targets_ind[0]):]
+            if len(self.hidden_targets_ind) > 0:
+                obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
+                          + obs_obs_forward[self.hidden_objects_ind[0]:(num_obs_objects + self.hidden_targets_ind[0])] \
+                          + obs_enc[num_hidden_objects:] + obs_obs_forward[(num_obs_objects + self.hidden_targets_ind[0]):]
+            else:
+                obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
+                          + obs_obs_forward[self.hidden_objects_ind[0]:]
             obs_enc = list(obs_enc)
 
             return obs_enc[:3], obs_enc[3:]
@@ -200,7 +210,9 @@ def obs_encoder(params):
         chemical_env_params = params.env_params.chemical_env_params
         layer_num = recurrent_enc_params.layer_num
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
-        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim + 1
+        # obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim + 1
+        # obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
+        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
         logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot hidden states
         device = params.device

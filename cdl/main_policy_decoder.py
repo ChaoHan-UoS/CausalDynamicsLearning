@@ -23,7 +23,7 @@ from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
-from model.encoder import make_encoder
+from model.encoder import obs_encoder, act_encoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
     get_start_step_from_model_loading, preprocess_obs, postprocess_obs
@@ -53,25 +53,28 @@ def train(params):
     cmi_params = inference_params.cmi_params
 
     # init environment
+    chemical_env_params = params.env_params.chemical_env_params
+    hidden_objects_ind = chemical_env_params.hidden_objects_ind
+    hidden_targets_ind = chemical_env_params.hidden_targets_ind
+    ind_f = range(2 * chemical_env_params.num_objects)
+    params.hidden_ind = hidden_objects_ind + [chemical_env_params.num_objects + i for i in hidden_targets_ind]
+    params.obs_ind = [i for i in ind_f if i not in params.hidden_ind]
+    assert 0 < len(params.obs_ind) <= len(ind_f)
+    params.keys_f = params.obs_keys_f + params.goal_keys_f
+    params.obs_keys = [params.keys_f[i] for i in params.obs_ind]
+    params.hidden_keys = [k for k in params.keys_f if k not in params.obs_keys]
+
     render = False
     num_env = params.env_params.num_env
     is_vecenv = num_env > 1
     env = get_env(params, render)
     if isinstance(env, Chemical):
         torch.save(env.get_save_information(), os.path.join(params.rslts_dir, "chemical_env_params"))
-    hidden_objects_ind = params.env_params.chemical_env_params.hidden_objects_ind
-    num_objects = params.env_params.chemical_env_params.num_objects
-    num_colors = params.env_params.chemical_env_params.num_colors
-    params.obs_keys = [params.obs_keys_f[i] for i in range(num_objects) if i not in hidden_objects_ind]
-    hidden_state_keys = [params.obs_keys_f[i] for i in range(num_objects) if i in hidden_objects_ind]
 
     # init model
     update_obs_act_spec(env, params)
-    encoder = make_encoder(params)
+    encoder = obs_encoder(params)
     decoder = None
-
-    criterion = nn.NLLLoss()
-    optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -87,7 +90,7 @@ def train(params):
         Inference = InferenceCMI
     else:
         raise NotImplementedError
-    inference = Inference(encoder, params)
+    inference = Inference(encoder, decoder, params)
     inference.eval()
     print('mask_CMI\n', inference.mask_CMI)
 

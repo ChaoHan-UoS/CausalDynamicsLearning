@@ -144,7 +144,7 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=False)
+                        sample_i = F.gumbel_softmax(logits, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
