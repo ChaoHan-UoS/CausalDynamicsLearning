@@ -4,57 +4,38 @@ import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
 
-
-# class LinearLayer:
-#     def __init__(self, input_size, output_size):
-#         self.weights = torch.randn(output_size, input_size)
-#         self.bias = torch.randn(output_size)
-#
-#     def forward(self, x):
-#         return torch.matmul(x, self.weights.t()) + self.bias
-
-
-# # Randomly initialize weights and bias
-# weights = np.random.randn(128, 18)
-# bias = np.random.randn(128)
-#
-# # Create the Linear layer
-# class FeedforwardDecoder:
-#     def __init__(self, params, input_dim, output_dim, hidden_dim):
-#         self.weights = weights
-#         self.bias = bias
-#         self.input_size = input_dim
-#         self.output_size = output_dim
-#
-#     def __call__(self, x):
-#         return np.dot(x, self.weights.T) + self.bias
+from model.inference_utils import reset_layer
 
 
 class FeedforwardDecoder(nn.Module):
-    def __init__(self, params, input_dim, output_dim, hidden_dim):
+    def __init__(self, params, input_dim, output_dim, hidden_dim, dropout):
         super().__init__()
-        # self.new = nn.LSTM(18, 128)
-        # self.feedforward1 = nn.Sequential(
-        #     nn.Linear(input_dim, hidden_dim)
-            # nn.ReLU(),
-            # nn.Linear(hidden_dim, hidden_dim),
-            # nn.ReLU(),
-            # nn.Linear(hidden_dim, output_dim)
-        # )
+        self.feedforward = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            # nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim),
+            # nn.LayerNorm(hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, output_dim)
+        )
 
-        print('REWARD INIT')
+        # # apply the same initialization scheme to linear layers in the decoder
+        # # as those in the transition model
+        # for layer in self.feedforward:
+        #     if isinstance(layer, nn.Linear):
+        #         reset_layer(layer.weight, layer.bias)
 
     def forward(self, feature):
         """
         :param feature: [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
         :return: (bs, (n_pred_step), reward_dim)
         """
-        """
         feature = torch.stack(feature, dim=0)  # (2 * num_objects, bs, (n_pred_step), num_colors)
-
         feature_dims = len(feature.shape)
         if feature_dims == 4:
             feature = feature.permute(1, 0, 2, 3)  # (bs, 2 * num_objects, n_pred_step, num_colors)
@@ -70,10 +51,7 @@ class FeedforwardDecoder(nn.Module):
             feature = feature.permute(1, 0, 2)  # (bs, 2 * num_objects, num_colors)
             feature = feature.reshape((feature.shape[0], -1))  # (bs, 2 * num_objects * num_colors)
             feature_dec = self.feedforward(feature)  # (bs, reward_dim)
-        """
-
-        return None
-
+        return feature_dec
 
 
 def rew_decoder(params):
@@ -85,21 +63,8 @@ def rew_decoder(params):
         logit_shape = 1
         device = params.device
         hidden_layer_size = feedforward_dec_params.hidden_layer_size
-        decoder1 = FeedforwardDecoder(params, obs_shape, logit_shape, hidden_layer_size)
-
-        # # Example usage
-        # input_size = 18
-        # output_size = 128
-        #
-        # # Create the Linear layer
-        # fc1 = LinearLayer(input_size, output_size)
-
+        dropout = feedforward_dec_params.dropout
+        decoder = FeedforwardDecoder(params, obs_shape, logit_shape, hidden_layer_size, dropout).to(device)
     else:
         raise ValueError("Unknown decoder_type: {}".format(decoder_type))
-
-    print('REWARD DECODER')
-    return None
-
-
-
-
+    return decoder

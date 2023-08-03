@@ -285,7 +285,7 @@ class InferenceCMI(Inference):
 
             dist = []
             for base_i, feature_i_inner_dim, dist_i in zip(residual_base, feature_inner_dim, x):
-                dist_i = dist_i.squeeze(dim=0)
+                dist_i = dist_i.squeeze(dim=0)                              # (bs, feature_inner_dim_i)
                 if feature_i_inner_dim == 1:
                     mu, log_std = torch.split(dist_i, 1, dim=-1)            # (bs, 1), (bs, 1)
                     dist.append(self.normal_helper(mu, base_i, log_std))
@@ -712,17 +712,16 @@ class InferenceCMI(Inference):
         :return rec_loss: scalar tensor
                 rec_loss_detail: {"loss_name": loss_value}
         """
-        # rew_feature = self.decoder(feature)  # (bs, (n_pred_step), reward_dim)
-        # rec_loss = self.loss_mse(rew_feature, rew)  # (bs, (n_pred_step), reward_dim)
-        # if len(rec_loss.shape) == 3:
-        #     rec_loss = rec_loss.sum(dim=(-2, -1)).mean()  # sum over n_pred_step and reward_dim then average over bs
-        #     rec_loss_detail = {"next_rec_loss": rec_loss}
-        # else:
-        #     rec_loss = rec_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
-        #     rec_loss_detail = {"rec_loss": rec_loss}
-        #
-        # return rec_loss, rec_loss_detail
-        return None
+        rew_feature = self.decoder(feature)  # (bs, (n_pred_step), reward_dim)
+        rec_loss = self.loss_mse(rew_feature, rew)  # (bs, (n_pred_step), reward_dim)
+        if len(rec_loss.shape) == 3:
+            rec_loss = rec_loss.sum(dim=(-2, -1)).mean()  # sum over n_pred_step and reward_dim then average over bs
+            rec_loss_detail = {"next_rec_loss": rec_loss}
+        else:
+            rec_loss = rec_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
+            rec_loss_detail = {"rec_loss": rec_loss}
+
+        return rec_loss, rec_loss_detail
 
     def prediction_loss_from_multi_feature(self, pred_next_feature, next_rew):
         """
@@ -794,23 +793,23 @@ class InferenceCMI(Inference):
         pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
         # print(pred_loss_neg)
 
-        # rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
-        # next_rec_loss, next_rec_loss_detail = self.rec_loss_from_feature(next_feature + next_feature_target, next_rews)
-        # next_feature_target_multi = [next_feature_target for _ in range(3)]
-        # pred_next_feature_target = [pred_next_feature_i + next_feature_target_multi_i
-        #                             for pred_next_feature_i, next_feature_target_multi_i in
-        #                             zip(pred_next_feature, next_feature_target_multi)]
-        # rec_pred_loss, rec_pred_loss_detail = \
-        #     self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
+        rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
+        next_rec_loss, next_rec_loss_detail = self.rec_loss_from_feature(next_feature + next_feature_target, next_rews)
+        next_feature_target_multi = [next_feature_target for _ in range(3)]
+        pred_next_feature_target = [pred_next_feature_i + next_feature_target_multi_i
+                                    for pred_next_feature_i, next_feature_target_multi_i in
+                                    zip(pred_next_feature, next_feature_target_multi)]
+        rec_pred_loss, rec_pred_loss_detail = \
+            self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
 
         # loss = pred_loss
-        # loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
+        loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
         # loss = rec_loss
-        loss = pred_loss + pred_loss_neg
+        # loss = pred_loss + pred_loss_neg
 
-        # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
+        loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
         # loss_detail = {**rec_loss_detail}
-        loss_detail = {**loss_detail}
+        # loss_detail = {**loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
 
@@ -840,10 +839,8 @@ class InferenceCMI(Inference):
                 mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
                 # print(i, mask)
                 if i == 0:
-                    # pred_next_dists = self.forward_with_feature(feature, actions, mask, forward_mode=("full", "masked"))
                     pred_next_dists, _ = self.forward_with_feature(feature, actions, mask)
                     # pred_loss: (bs, n_pred_step, feature_dim)
-                    # full_pred_loss, masked_pred_loss = \
                     full_pred_loss, masked_pred_loss, eval_pred_loss = \
                         [self.prediction_loss_from_dist(pred_next_dist_i, next_feature, keep_variable_dim=True)
                          for pred_next_dist_i in pred_next_dists]
@@ -852,7 +849,6 @@ class InferenceCMI(Inference):
                     # pred_loss: (bs, n_pred_step, feature_dim)
                     masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature,
                                                                       keep_variable_dim=True)
-                # bs * predicted_next_features
                 masked_pred_loss = masked_pred_loss.mean(dim=1)                         # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)
 

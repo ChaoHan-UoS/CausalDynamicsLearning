@@ -23,7 +23,7 @@ from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
-from model.encoder import make_encoder
+from model.encoder import obs_encoder
 from model.decoder import rew_decoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
@@ -107,14 +107,8 @@ def train(params):
 
     # init model
     update_obs_act_spec(env, params)
-    encoder = make_encoder(params)
-    decoder1 = rew_decoder(params)
-    # linear_layer = nn.Linear(1, 1)
-    # x = torch.randn(1, 1)
-    # decoder = None
-
-    # criterion = nn.NLLLoss()
-    # optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-3)
+    encoder = obs_encoder(params)
+    decoder = rew_decoder(params)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -130,7 +124,7 @@ def train(params):
         Inference = InferenceCMI
     else:
         raise NotImplementedError
-    inference = Inference(encoder, decoder1, params)
+    inference = Inference(encoder, decoder, params)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -155,13 +149,11 @@ def train(params):
     else:
         buffer_train = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            # stack_num=replay_buffer_params.stack_num,
             stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
             sample_avail=True,
         )
         buffer_eval_cmi = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            # stack_num=replay_buffer_params.stack_num,
             stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
             sample_avail=True,
         )
@@ -174,8 +166,6 @@ def train(params):
     start_step = get_start_step_from_model_loading(params)
     total_steps = training_params.total_steps
     collect_env_step = training_params.collect_env_step
-    supervised_encoder = training_params.supervised_encoder
-    supervised_encoder_plot = training_params.supervised_encoder_plot
     inference_gradient_steps = training_params.inference_gradient_steps
     policy_gradient_steps = training_params.policy_gradient_steps
     train_prop = inference_params.train_prop
@@ -191,10 +181,6 @@ def train(params):
     episode_step = np.zeros(num_env) if is_vecenv else 0
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
-
-    # plot loss curve for supervised encoder
-    losses = []
-    steps = []
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
@@ -274,12 +260,11 @@ def train(params):
 
             # save env transitions in the replay buffer
             if episode_step == 1:
-                obs_f = preprocess_obs(obs_f, params)  # filter out target obs keys
+                obs_f = preprocess_obs(obs_f, params)  # convert to np.float32
                 obs = preprocess_obs(obs, params)
             hidden_state = {key: obs_f[key] for key in params.hidden_keys}
             info.update(hidden_state)
-            # obs['act'] = np.array([action])
-            obs['act'], obs['rew'] = np.array([action * 0], dtype=np.float32), np.array([env_reward * 0])
+            obs['act'], obs['rew'] = np.array([action], dtype=np.float32), np.array([env_reward])
 
             next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs_f['act'], next_obs_f['rew'] = np.zeros(1), np.zeros(1)
@@ -295,7 +280,7 @@ def train(params):
                     buffer_train.obs_next[len(buffer_train) - 1] = temp
                 buffer_train.add(
                     Batch(obs=obs,
-                          act=action*0,
+                          act=action,
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
@@ -310,7 +295,7 @@ def train(params):
                     buffer_eval_cmi.obs_next[len(buffer_eval_cmi) - 1] = temp
                 buffer_eval_cmi.add(
                     Batch(obs=obs,
-                          act=action*0,
+                          act=action,
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
@@ -332,35 +317,38 @@ def train(params):
         if inference_gradient_steps > 0:
             inference.train()
             encoder.train()
+            decoder.train()
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
-                batch_data, _ = buffer_train.sample(inference_params.batch_size)
+                batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch =\
                     sample_process(batch_data, params)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch)
                 loss_details["inference"].append(loss_detail)
-
             # print('Parameters in inference (train mode)')
             # for name, value in inference.named_parameters():
             #     print(name, value)
 
             inference.eval()
             encoder.eval()
+            decoder.eval()
             if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
-                        batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
+                        batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                         obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch = \
                             sample_process(batch_data, params)
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
-                    batch_data, _ = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    loss_detail = inference.update(batch_data.obs, batch_data.act, batch_data.obs_next, eval=True)
+                    batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
+                    obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch = \
+                        sample_process(batch_data, params)
+                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
+                                                   next_rews_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
-
             # print('Parameters in inference (eval mode)')
             # for name, value in inference.named_parameters():
             #     print(name, value)

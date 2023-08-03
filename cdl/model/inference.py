@@ -18,11 +18,11 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, decoder1, params):
+    def __init__(self, encoder, decoder, params):
         super(Inference, self).__init__()
 
         self.encoder = encoder
-        # self.decoder = decoder
+        self.decoder = decoder
 
         self.params = params
         self.device = device = params.device
@@ -148,7 +148,7 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=True)
+                        sample_i = F.gumbel_softmax(logits, hard=False)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
