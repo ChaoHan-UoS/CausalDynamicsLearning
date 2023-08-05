@@ -749,13 +749,14 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def update(self, obs, actions, next_obses, rew, next_rews, eval=False):
+    def update(self, obs, actions, next_obses, rew, next_rews, hidden_batch, eval=False):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, n_pred_step, action_dim)  # not one-hot representation
         :param next_obses: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
         :param rew: (bs, reward_dim)
         :param next_rews: (bs, n_pred_step, reward_dim)
+        :param hidden_batch: (bs, hidden_dim)
 
         :return: {"loss_name": loss_value}
         """
@@ -795,6 +796,7 @@ class InferenceCMI(Inference):
 
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
         next_rec_loss, next_rec_loss_detail = self.rec_loss_from_feature(next_feature + next_feature_target, next_rews)
+
         next_feature_target_multi = [next_feature_target for _ in range(3)]
         pred_next_feature_target = [pred_next_feature_i + next_feature_target_multi_i
                                     for pred_next_feature_i, next_feature_target_multi_i in
@@ -803,15 +805,21 @@ class InferenceCMI(Inference):
             self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
 
         # loss = pred_loss
-        loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
-        # loss = rec_loss
+        # loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
+        loss = rec_loss
         # loss = pred_loss + pred_loss_neg
 
-        loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
-        # loss_detail = {**rec_loss_detail}
+        # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
+        loss_detail = {**rec_loss_detail}
         # loss_detail = {**loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
+
+        if eval:
+            hidden_batch_feature = torch.argmax(feature[1], dim=1, keepdim=True).float()  # (bs, hidden_dim)
+            hidden_loss = self.loss_mse(hidden_batch_feature, hidden_batch)
+            hidden_loss = hidden_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
+            loss_detail["hidden_loss"] = hidden_loss
 
         return loss_detail
 

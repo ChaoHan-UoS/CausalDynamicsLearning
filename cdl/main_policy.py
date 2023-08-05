@@ -48,6 +48,7 @@ def sample_process(batch_data, params):
             next_obses_batch: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
             rew_batch: (bs, reward_dim)
             next_rews_batch: (bs, n_pred_step, reward_dim)
+            hidden_batch: (bs, hidden_dim)
     """
     replay_buffer_params = params.training_params.replay_buffer_params
     inference_params = params.inference_params
@@ -57,6 +58,10 @@ def sample_process(batch_data, params):
     obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
     # (bs, reward_dim)
     rew_batch = obs_batch.rew[:, -1]
+
+    info_batch = batch_data.info[:, :replay_buffer_params.stack_num]
+    # (bs, hidden_dim)
+    hidden_batch = info_batch.obj1[:, -1]
 
     actions_batch = []
     next_obses_batch = []
@@ -72,7 +77,7 @@ def sample_process(batch_data, params):
     # (bs, n_pred_step, reward_dim)
     next_rews_batch = torch.stack(next_rews_batch, dim=-2)
 
-    return obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch
+    return obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_batch
 
 
 def train(params):
@@ -321,9 +326,10 @@ def train(params):
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
-                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch =\
+                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_batch =\
                     sample_process(batch_data, params)
-                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch)
+                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
+                                               next_rews_batch, hidden_batch)
                 loss_details["inference"].append(loss_detail)
             # print('Parameters in inference (train mode)')
             # for name, value in inference.named_parameters():
@@ -333,7 +339,7 @@ def train(params):
             encoder.eval()
             decoder.eval()
             if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
-                if use_cmi:
+                if False:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
@@ -344,10 +350,10 @@ def train(params):
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch = \
+                    obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch , hidden_batch = \
                         sample_process(batch_data, params)
                     loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
-                                                   next_rews_batch, eval=True)
+                                                   next_rews_batch, hidden_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
             # print('Parameters in inference (eval mode)')
             # for name, value in inference.named_parameters():
