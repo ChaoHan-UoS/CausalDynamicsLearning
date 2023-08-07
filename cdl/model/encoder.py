@@ -214,7 +214,8 @@ class RecurrentEncoder(RNN):
     def forward(self, obs, s_0=None):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
-        :return: [(bs, (n_pred_step), num_colors)] * num_objects
+        :return: [(bs, (n_pred_step), num_colors)] * num_objects, (full states)
+                 [(bs, (n_pred_step), num_colors)] * num_objects  (full target states)
         """
         if self.continuous_state:
             # overwrite some observations for out-of-distribution evaluation
@@ -252,7 +253,7 @@ class RecurrentEncoder(RNN):
             obs_obs = torch.stack(obs[:-2], dim=0)  # (num_dset_observables, bs, stack_num, (n_pred_step), num_colors)
 
             # slice in action and reward from observation
-            obs_act, obs_rew = obs[-2], obs[-1]  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
+            obs_act, obs_rew = obs[-2].clone(), obs[-1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
             # mask out the last action / reward in the stacked obs
             obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
 

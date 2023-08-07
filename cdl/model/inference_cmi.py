@@ -749,14 +749,14 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def update(self, obs, actions, next_obses, rew, next_rews, hidden_batch, eval=False):
+    def update(self, obs, actions, next_obses, rew, next_rews, hidden_label, eval=False):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, n_pred_step, action_dim)  # not one-hot representation
         :param next_obses: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
         :param rew: (bs, reward_dim)
         :param next_rews: (bs, n_pred_step, reward_dim)
-        :param hidden_batch: (bs, hidden_dim)
+        :param hidden_label: (bs, hidden_dim)
 
         :return: {"loss_name": loss_value}
         """
@@ -770,9 +770,10 @@ class InferenceCMI(Inference):
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
         feature, feature_target = self.encoder(obs)  # feature: [(bs, num_colors)] * num_objects
-        next_feature, next_feature_target = self.encoder(next_obses)  # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
+        # next_feature, next_feature_target = self.encoder(next_obses)  # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
         # next_feature, next_feature_target = self.encoder_iden(next_obses)
 
+        """
         # Create negative examples
         perm = torch.randperm(bs)
         feature_neg = [feature_i[perm] for feature_i in feature]
@@ -793,8 +794,10 @@ class InferenceCMI(Inference):
         pred_loss_neg, _ = self.prediction_loss_from_multi_dist(pred_next_dist_neg, next_feature)
         pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
         # print(pred_loss_neg)
+        """
 
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
+        """
         next_rec_loss, next_rec_loss_detail = self.rec_loss_from_feature(next_feature + next_feature_target, next_rews)
 
         next_feature_target_multi = [next_feature_target for _ in range(3)]
@@ -803,9 +806,10 @@ class InferenceCMI(Inference):
                                     zip(pred_next_feature, next_feature_target_multi)]
         rec_pred_loss, rec_pred_loss_detail = \
             self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
+        """
 
         # loss = pred_loss
-        # loss = pred_loss + pred_loss_neg + 50 * (rec_loss + next_rec_loss + rec_pred_loss)
+        # loss = pred_loss + pred_loss_neg + 1 * (rec_loss + next_rec_loss + rec_pred_loss)
         loss = rec_loss
         # loss = pred_loss + pred_loss_neg
 
@@ -815,11 +819,11 @@ class InferenceCMI(Inference):
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
 
-        if eval:
-            hidden_batch_feature = torch.argmax(feature[1], dim=1, keepdim=True).float()  # (bs, hidden_dim)
-            hidden_loss = self.loss_mse(hidden_batch_feature, hidden_batch)
-            hidden_loss = hidden_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
-            loss_detail["hidden_loss"] = hidden_loss
+        # if eval:
+        #     hidden_feature = torch.argmax(feature[1], dim=1, keepdim=True).float()  # (bs, hidden_dim)
+        #     hidden_loss = self.loss_mse(hidden_feature, hidden_label)
+        #     hidden_loss = hidden_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
+        #     loss_detail["hidden_loss"] = hidden_loss
 
         return loss_detail
 

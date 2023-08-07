@@ -100,7 +100,7 @@ def train(params):
     params.obs_ind = [i for i in ind_f if i not in params.hidden_ind]
     assert 0 < len(params.obs_ind) <= len(ind_f)
     params.keys_f = params.obs_keys_f + params.goal_keys_f
-    params.obs_keys  = [params.keys_f[i] for i in params.obs_ind]
+    params.obs_keys = [params.keys_f[i] for i in params.obs_ind]
     params.hidden_keys = [k for k in params.keys_f if k not in params.obs_keys]
 
     render = False
@@ -130,6 +130,10 @@ def train(params):
     else:
         raise NotImplementedError
     inference = Inference(encoder, decoder, params)
+    inference.eval()
+    encoder.eval()
+    decoder.eval()
+    print('mask_CMI\n', inference.mask_CMI)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -168,11 +172,11 @@ def train(params):
     model_dir = os.path.join(params.rslts_dir, "trained_models")
     os.makedirs(model_dir, exist_ok=True)
 
-    start_step = get_start_step_from_model_loading(params)
+    # start_step = get_start_step_from_model_loading(params)
+    start_step = 0
     total_steps = training_params.total_steps
     collect_env_step = training_params.collect_env_step
-    inference_gradient_steps = training_params.inference_gradient_steps
-    policy_gradient_steps = training_params.policy_gradient_steps
+    supervised_decoder = training_params.supervised_decoder
     train_prop = inference_params.train_prop
 
     # init episode variables
@@ -186,6 +190,54 @@ def train(params):
     episode_step = np.zeros(num_env) if is_vecenv else 0
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
+
+
+    """
+    # plot loss curve for supervised encoder
+    losses = []
+    steps = []
+
+    # # load trained model
+    # checkpoint = torch.load(load_inference)
+    # inference.load_state_dict(checkpoint['model'])
+    # inference.eval()
+    # encoder = inference.encoder
+    # encoder.eval()
+
+    # init decoder
+    class LiDecoder(nn.Module):
+        def __init__(self, input_dim, output_dim):
+            super(LiDecoder, self).__init__()
+            self.fc1 = nn.Linear(input_dim, output_dim)
+
+        def forward(self, x):
+            out = self.fc1(x)
+            return out
+
+    class NonliDecoder(nn.Module):
+        def __init__(self, input_dim, hidden_dim, output_dim):
+            super(NonliDecoder, self).__init__()
+            self.mlp = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, output_dim)
+            )
+
+        def forward(self, x):
+            out = self.mlp(x)
+            return out
+
+    linear_decoder = True
+    if linear_decoder:
+        decoder = LiDecoder(num_colors, num_colors)
+    else:
+        decoder = NonliDecoder(num_colors, 128, num_colors)
+
+    # loss and optimizer for decoder
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=1e-3)
+    """
+
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
@@ -319,87 +371,125 @@ def train(params):
         if is_init_stage:
             continue
 
-        if inference_gradient_steps > 0:
-            inference.train()
-            encoder.train()
-            decoder.train()
-            inference.setup_annealing(step)
-            for i_grad_step in range(inference_gradient_steps):
-                batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
-                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch =\
-                    sample_process(batch_data, params)
-                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
-                                               next_rews_batch, hidden_label_batch)
-                loss_details["inference"].append(loss_detail)
-            # print('Parameters in inference (train mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
+        if supervised_decoder:
+            batch_data, batch_ids = buffer_train.sample(cmi_params.eval_batch_size)
+            obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
+                sample_process(batch_data, params)
 
-            inference.eval()
-            encoder.eval()
-            decoder.eval()
-            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
-                if False:
-                    # if do not update inference, there is no need to update inference eval mask
-                    inference.reset_causal_graph_eval()
-                    for _ in range(cmi_params.eval_steps):
-                        batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch , hidden_label_batch = \
-                            sample_process(batch_data, params)
-                        eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
-                        loss_details["inference_eval"].append(eval_pred_loss)
-                else:
-                    batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch , hidden_label_batch = \
-                        sample_process(batch_data, params)
-                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
-                                                   next_rews_batch, hidden_label_batch, eval=True)
-                    loss_details["inference_eval"].append(loss_detail)
-            # print('Parameters in inference (eval mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
+            hidden_label = F.one_hot(hidden_label_batch.squeeze(-1).long(),  # (bs, num_colors)
+                                     chemical_env_params.num_colors).float()
 
-            inference.scheduler.step()
 
-        if policy_gradient_steps > 0 and rl_algo != "random":
-            policy.train()
-            if rl_algo in ["ppo", "hippo"]:
-                loss_detail = policy.update()
-                loss_details["policy"].append(loss_detail)
-            else:
-                policy.setup_annealing(step)
-                for i_grad_step in range(policy_gradient_steps):
-                    obs_batch, actions_batch, rewards_batch, idxes_batch = \
-                        replay_buffer.sample_model_based(policy_params.batch_size)
 
-                    loss_detail = policy.update(obs_batch, actions_batch, rewards_batch)
-                    if use_prioritized_buffer:
-                        replay_buffer.update_priorties(idxes_batch, loss_detail["priority"])
-                    loss_details["policy"].append(loss_detail)
-            policy.eval()
+            feature, feature_target = inference.encoder(obs_batch)  # feature: [(bs, num_colors)] * num_objects
+            feature_f = [(feature + feature_target)[i] for i in params.hidden_ind]  # [(bs, num_colors)} * num_hidden
+            feature_f = torch.cat(feature_f, dim=-1)  # (bs, num_colors * num_hidden)
+            hidden_feature = feature
 
-        # logging
-        if writer is not None:
-            for module_name, module_loss_detail in loss_details.items():
-                if not module_loss_detail:
-                    continue
-                # list of dict to dict of list
-                if isinstance(module_loss_detail, list):
-                    keys = set().union(*[dic.keys() for dic in module_loss_detail])
-                    module_loss_detail = {k: [dic[k].item() for dic in module_loss_detail if k in dic]
-                                          for k in keys if k not in ["priority"]}
-                for loss_name, loss_values in module_loss_detail.items():
-                    writer.add_scalar("{}/{}".format(module_name, loss_name), np.mean(loss_values), step)
 
-            if (step + 1) % training_params.plot_freq == 0 and inference_gradient_steps > 0:
-                plot_adjacency_intervention_mask(params, inference, writer, step)
+            hidden_batch_feature = torch.argmax(feature[1], dim=1, keepdim=True).float()  # (bs, hidden_dim)
+            hidden_loss = self.loss_mse(hidden_batch_feature, hidden_batch)
+            hidden_loss = hidden_loss.sum(dim=-1).mean()  # sum over reward_dim then average over bs
+            loss_detail["hidden_loss"] = hidden_loss
 
-        # saving training results
-        if (step + 1) % training_params.saving_freq == 0:
-            if inference_gradient_steps > 0:
-                inference.save(os.path.join(model_dir, "inference_{}".format(step + 1)))
-            if policy_gradient_steps > 0:
-                policy.save(os.path.join(model_dir, "policy_{}".format(step + 1)))
+            loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
+                                           next_rews_batch, hidden_batch, eval=True)
+            loss_details["inference_eval"].append(loss_detail)
+
+
+
+
+            batch_data, _ = buffer_train.sample(inference_params.batch_size)
+            obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+            label_batch = to_torch(batch_data.info, torch.int64, params.device)
+            label_batch = label_batch[:, -1]  # keep only the current label_batch
+            label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+            label_batch = F.one_hot(label_batch, num_colors).float()
+
+            # Forward pass
+            obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
+            _, pred_batch = torch.max(obs_softmax, 1)
+
+            # # label-> decoder -> encoder prediction
+            # logits = decoder(label_batch)
+            # loss = criterion(logits, pred_batch)
+
+            # encoder prediction -> decoder -> label
+            logits = decoder(obs_softmax)
+            loss = criterion(logits, label_batch_)
+
+            # Backward and optimize
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            if (step + 1) % 100 == 0:
+                print("Step {}/{}, Loss: {:.4f}".format(step + 1, total_steps, loss.item()))
+            losses.append(loss.item())
+            steps.append(step + 1)
+
+    # testing decoder
+    with (torch.no_grad()):
+        batch_data, batch_ids = buffer_train.sample(1000)
+        obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
+            sample_process(batch_data, params)
+
+        feature, feature_target = encoder(obs_batch)  # feature: [(bs, num_colors)] * num_objects
+        rew_feature = decoder(feature + feature_target)  # (bs, (n_pred_step), reward_dim)
+        # convert one-hot to integer colors
+        feature = [torch.argmax(feature_i, dim=-1).float() for feature_i in feature]
+        feature_target = [torch.argmax(feature_target_i, dim=-1).float() for feature_target_i in feature_target]
+        # slice in the hidden objects
+        hidden_feature = [feature[i] for i in hidden_objects_ind]  # [(bs)] * num_hidden_objects
+        hidden_feature_target = [feature_target[i] for i in hidden_targets_ind]  # [(bs)] * num_hidden_targets
+        hidden_object, hidden_target = hidden_feature[0], hidden_feature_target[0]  # (bs)
+
+        hidden_label_object = hidden_label_batch[params.hidden_keys[0]].squeeze(dim=-1)  # (bs)
+        hidden_label_target = hidden_label_batch[params.hidden_keys[1]].squeeze(dim=-1)
+
+
+        print(f'Hidden Object Predictions: {hidden_object.view(-1, 5)[:10]}')
+        print(f'Hidden Object Labels: {hidden_label_object.view(-1, 5)[:10]}')
+        print(f'Hidden Target Predictions: {hidden_target.view(-1, 5)[:10]}')
+        print(f'Hidden Target Labels: {hidden_label_target.view(-1, 5)[:10]}')
+
+        print(f'Reward Predictions: {rew_feature.view(-1, 5)[:10]}')
+        print(f'Reward Labels: {rew_batch.view(-1, 5)[:10]}')
+
+
+
+        """
+        batch_data, _ = buffer_eval_cmi.sample(1000)
+        obs_batch = to_torch(batch_data.obs, torch.float32, params.device)
+        label_batch = to_torch(batch_data.info, torch.int64, params.device)
+        label_batch = label_batch[:, -1]
+        label_batch_ = label_batch = label_batch[hidden_state_keys[0]].squeeze(-1)
+        label_batch = F.one_hot(label_batch, num_colors).float()
+
+        obs_softmax = encoder(obs_batch)[0][hidden_objects_ind[0]]
+        _, pred_batch_enc = torch.max(obs_softmax, 1)
+
+        # # label-> decoder -> encoder prediction
+        # logits = decoder(label_batch)
+        # _, pred_batch_dec = torch.max(logits, 1)
+
+        # encoder prediction -> decoder -> label
+        logits = decoder(obs_softmax)
+        _, pred_batch_dec = torch.max(logits, 1)
+
+        n_samples = pred_batch_enc.size(0)
+        n_correct_enc = (label_batch_ == pred_batch_enc).sum().item()
+        # n_correct_dec = (pred_batch_dec == pred_batch_enc).sum().item()  # label-> decoder -> encoder prediction
+        n_correct_dec = (pred_batch_dec == label_batch_).sum().item()  # encoder prediction -> decoder -> label
+
+        acc_enc = 100.0 * n_correct_enc / n_samples
+        acc_dec = 100.0 * n_correct_dec / n_samples
+        print(f'Encoder Predictions: {pred_batch_enc.view(-1, 5)[:10]}')
+        print(f'Labels: {label_batch_.view(-1, 5)[:10]}')
+        # print(f'Decoder Predictions: {pred_batch_dec.view(-1, 5)[:10]}, {pred_batch_dec.max()}, {pred_batch_dec.min()}        print(f'Testing accuracy of encoder over {n_samples} samples: {n_correct_enc} / {n_samples} = {acc_enc}%')
+        # print(f'Testing accuracy of decoder over {n_samples} samples: {n_correct_dec} / {n_samples} = {acc_dec}%')
+        """
+
 
 
 if __name__ == "__main__":

@@ -36,8 +36,8 @@
         },
         "chemical_env_params": {
             "hidden_objects_ind": [1],
-            "keys_dset": ["obj0", "obj2"],
-            "hidden_targets_ind": [],
+            "keys_dset": ["obj0", "obj2", "target_obj0", "target_obj2"],
+            "hidden_targets_ind": [1],
             "num_objects": 3,
             "num_colors": 3,
             "continuous_pos": true,
