@@ -57,7 +57,8 @@ def sample_process(batch_data, params):
     # Batch(obs_i_key: (bs, stack_num, obs_i_shape))
     obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
     # (bs, reward_dim)
-    rew_batch = obs_batch.rew[:, -1]
+    # observation at t corresponds to reward at t-1
+    rew_batch = obs_batch.rew[:, -2]
 
     # {obs_i_key: (bs, obs_i_shape)}
     hidden_label_batch = {key: batch_data.info[key][:, replay_buffer_params.stack_num - 1]
@@ -69,7 +70,7 @@ def sample_process(batch_data, params):
     for i in range(inference_params.n_pred_step):
         actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 1])
         next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
-        next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 1])
+        next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 2])
     # (bs, n_pred_step, action_dim)
     actions_batch = torch.stack(actions_batch, dim=-2)
     # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
@@ -190,8 +191,8 @@ def train(params):
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
         is_enc_pretrain = 0 <= step - training_params.init_steps < training_params.enc_pretrain_steps
-        if (step + 1) % 100 == 0:
-            print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
+        # if (step + 1) % 100 == 0:
+        print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
                                                                           is_enc_pretrain))
         loss_details = {"inference": [],
                         "inference_eval": [],
@@ -339,7 +340,7 @@ def train(params):
             encoder.eval()
             decoder.eval()
             if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
-                if False:
+                if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):

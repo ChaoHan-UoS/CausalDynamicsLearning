@@ -342,8 +342,8 @@ class Chemical(gym.Env):
         s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
         a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
 
-        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
-        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
+        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
 
         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))

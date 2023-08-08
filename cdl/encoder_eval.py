@@ -57,7 +57,8 @@ def sample_process(batch_data, params):
     # Batch(obs_i_key: (bs, stack_num, obs_i_shape))
     obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
     # (bs, reward_dim)
-    rew_batch = obs_batch.rew[:, -1]
+    # observation at t corresponds to reward at t-1
+    rew_batch = obs_batch.rew[:, -2]
 
     # {obs_i_key: (bs, obs_i_shape)}
     hidden_label_batch = {key: batch_data.info[key][:, replay_buffer_params.stack_num - 1]
@@ -69,7 +70,7 @@ def sample_process(batch_data, params):
     for i in range(inference_params.n_pred_step):
         actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 1])
         next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
-        next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 1])
+        next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 2])
     # (bs, n_pred_step, action_dim)
     actions_batch = torch.stack(actions_batch, dim=-2)
     # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
@@ -434,6 +435,7 @@ def train(params):
         obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
             sample_process(batch_data, params)
 
+        hidden_targets_ind = [1]
         feature, feature_target = encoder(obs_batch)  # feature: [(bs, num_colors)] * num_objects
         rew_feature = decoder(feature + feature_target)  # (bs, (n_pred_step), reward_dim)
         # convert one-hot to integer colors
@@ -445,13 +447,13 @@ def train(params):
         hidden_object, hidden_target = hidden_feature[0], hidden_feature_target[0]  # (bs)
 
         hidden_label_object = hidden_label_batch[params.hidden_keys[0]].squeeze(dim=-1)  # (bs)
-        hidden_label_target = hidden_label_batch[params.hidden_keys[1]].squeeze(dim=-1)
+        # hidden_label_target = hidden_label_batch[params.hidden_keys[1]].squeeze(dim=-1)
 
 
         print(f'Hidden Object Predictions: {hidden_object.view(-1, 5)[:10]}')
         print(f'Hidden Object Labels: {hidden_label_object.view(-1, 5)[:10]}')
-        print(f'Hidden Target Predictions: {hidden_target.view(-1, 5)[:10]}')
-        print(f'Hidden Target Labels: {hidden_label_target.view(-1, 5)[:10]}')
+        # print(f'Hidden Target Predictions: {hidden_target.view(-1, 5)[:10]}')
+        # print(f'Hidden Target Labels: {hidden_label_target.view(-1, 5)[:10]}')
 
         print(f'Reward Predictions: {rew_feature.view(-1, 5)[:10]}')
         print(f'Reward Labels: {rew_batch.view(-1, 5)[:10]}')

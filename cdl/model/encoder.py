@@ -255,7 +255,8 @@ class RecurrentEncoder(RNN):
             # slice in action and reward from observation
             obs_act, obs_rew = obs[-2].clone(), obs[-1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
             # mask out the last action / reward in the stacked obs
-            obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
+            # obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
+            obs_act[:, -1], obs_rew = obs_act[:, -1] * 0, obs_rew * 0
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
