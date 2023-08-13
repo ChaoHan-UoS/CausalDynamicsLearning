@@ -46,7 +46,7 @@ def sample_process(batch_data, params):
     :return obs_batch: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
             actions_batch: (bs, n_pred_step, action_dim)
             next_obses_batch: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
-            rew_batch: (bs, reward_dim)
+            rew_batch: (bs, reward_dim) or None
             next_rews_batch: (bs, n_pred_step, reward_dim)
             hidden_label_batch: (bs, hidden_dim)
     """
@@ -58,7 +58,10 @@ def sample_process(batch_data, params):
     obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
     # (bs, reward_dim)
     # observation at t corresponds to reward at t-1
-    rew_batch = obs_batch.rew[:, -2]
+    if replay_buffer_params.stack_num == 1:
+        rew_batch = None
+    else:
+        rew_batch = obs_batch.rew[:, -2]
 
     # {obs_i_key: (bs, obs_i_shape)}
     hidden_label_batch = {key: batch_data.info[key][:, replay_buffer_params.stack_num - 1]
@@ -70,7 +73,10 @@ def sample_process(batch_data, params):
     for i in range(inference_params.n_pred_step):
         actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 1])
         next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
-        next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 2])
+        if replay_buffer_params.stack_num == 1 and i == 0:
+            next_rews_batch.append(batch_data.obs.rew[:, replay_buffer_params.stack_num - 1])
+        else:
+            next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 2])
     # (bs, n_pred_step, action_dim)
     actions_batch = torch.stack(actions_batch, dim=-2)
     # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))

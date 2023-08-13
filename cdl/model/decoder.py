@@ -14,21 +14,21 @@ class FeedforwardDecoder(nn.Module):
         super().__init__()
         self.feedforward = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            # nn.LayerNorm(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, hidden_dim),
-            # nn.LayerNorm(hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, output_dim)
         )
 
-        # # apply the same initialization scheme to linear layers in the decoder
-        # # as those in the transition model
-        # for layer in self.feedforward:
-        #     if isinstance(layer, nn.Linear):
-        #         reset_layer(layer.weight, layer.bias)
+        # apply the same initialization scheme to linear layers in the decoder
+        # as those in the transition model
+        for layer in self.feedforward:
+            if isinstance(layer, nn.Linear):
+                reset_layer(layer.weight, layer.bias)
 
     def forward(self, feature):
         """

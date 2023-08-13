@@ -12,8 +12,6 @@ from model.inference import Inference
 from model.inference_utils import reset_layer, forward_network, forward_network_batch, get_state_abstraction
 from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
-# from model.encoder import IdentityEncoder
-
 
 class InferenceCMI(Inference):
     def __init__(self, encoder, decoder1, params):
@@ -30,7 +28,6 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
-        # self.encoder_iden = IdentityEncoder(params)
 
         # print('\nTrainable parameters within InferenceCMI class')
         # for name, value in self.named_parameters():
@@ -712,6 +709,8 @@ class InferenceCMI(Inference):
         :return rec_loss: scalar tensor
                 rec_loss_detail: {"loss_name": loss_value}
         """
+        if rew is None:
+            return 0, {}
         rew_feature = self.decoder(feature)  # (bs, (n_pred_step), reward_dim)
         rec_loss = self.loss_mse(rew_feature, rew)  # (bs, (n_pred_step), reward_dim)
         # rec_loss = rec_loss[rew == 1].unsqueeze(-1)
@@ -774,7 +773,6 @@ class InferenceCMI(Inference):
 
         feature, feature_target = self.encoder(obs)  # feature: [(bs, num_colors)] * num_objects
         next_feature, next_feature_target = self.encoder(next_obses)  # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
-        # next_feature, next_feature_target = self.encoder_iden(next_obses)
 
         # """
         # Create negative examples
@@ -849,7 +847,6 @@ class InferenceCMI(Inference):
         with torch.no_grad():
             feature, feature_target = self.encoder(obs)
             next_feature, next_feature_target = self.encoder(next_obses)
-            # next_feature, next_feature_target = self.encoder_iden(next_obses)
             for i in range(feature_dim + 1):
                 mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
                 # print(i, mask)

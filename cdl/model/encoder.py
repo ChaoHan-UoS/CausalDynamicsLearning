@@ -280,7 +280,7 @@ class RecurrentEncoder(RNN):
                 obs_enc = []
                 for obs_i in obs_pred_step:
                     obs_enc_i, s_n = super().forward(obs_i, s_0)  # obs_enc with shape (bs, logit_shape)
-                    s_0 = s_n
+                    # s_0 = s_n
 
                     obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
                     obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=False) if self.training \
