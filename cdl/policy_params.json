@@ -100,7 +100,7 @@
          }
     },
     "inference_params": {
-        "n_pred_step": 2,
+        "n_pred_step": 1,
         "batch_size": 128,
         "lr": 1e-4,
         "lr_scheduler_step_size": 100,

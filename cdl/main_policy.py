@@ -41,12 +41,13 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('TkAgg')
 
+
 def sample_process(batch_data, params):
     """
     :return obs_batch: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
-            actions_batch: (bs, n_pred_step, action_dim)
+            actions_batch: (bs, stack_num, action_dim)
             next_obses_batch: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
-            rew_batch: (bs, reward_dim) or None
+            rew_batch: (bs, stack_num, reward_dim)
             next_rews_batch: (bs, n_pred_step, reward_dim)
             hidden_label_batch: (bs, hidden_dim)
     """
@@ -56,29 +57,22 @@ def sample_process(batch_data, params):
     batch_data = to_torch(batch_data, torch.float32, params.device)
     # Batch(obs_i_key: (bs, stack_num, obs_i_shape))
     obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
-    # (bs, reward_dim)
+    actions_batch = obs_batch.act
     # observation at t corresponds to reward at t-1
-    if replay_buffer_params.stack_num == 1:
-        rew_batch = None
-    else:
-        rew_batch = obs_batch.rew[:, -2]
+    rew_batch = obs_batch.rew
 
     # {obs_i_key: (bs, obs_i_shape)}
     hidden_label_batch = {key: batch_data.info[key][:, replay_buffer_params.stack_num - 1]
                           for key in params.hidden_keys}
 
-    actions_batch = []
     next_obses_batch = []
     next_rews_batch = []
     for i in range(inference_params.n_pred_step):
-        actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 1])
         next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
         if replay_buffer_params.stack_num == 1 and i == 0:
             next_rews_batch.append(batch_data.obs.rew[:, replay_buffer_params.stack_num - 1])
         else:
             next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 2])
-    # (bs, n_pred_step, action_dim)
-    actions_batch = torch.stack(actions_batch, dim=-2)
     # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
     next_obses_batch = Batch.stack(next_obses_batch, axis=-2)
     # (bs, n_pred_step, reward_dim)
