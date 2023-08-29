@@ -14,10 +14,10 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class InferenceCMI(Inference):
-    def __init__(self, encoder, decoder1, params):
+    def __init__(self, encoder, decoder, params):
         self.cmi_params = params.inference_params.cmi_params
         self.init_graph(params, encoder)
-        super(InferenceCMI, self).__init__(encoder, decoder1, params)
+        super(InferenceCMI, self).__init__(encoder, decoder, params)
         self.causal_pred_reward_mean = 0
         self.causal_pred_reward_std = 1
         self.pred_diff_reward_std = 1
@@ -77,7 +77,7 @@ class InferenceCMI(Inference):
             out_dim = cmi_params.feature_fc_dims[0]
             fc_dims = cmi_params.feature_fc_dims[1:]
             for feature_i_dim in self.feature_inner_dim:
-                in_dim = 2 * feature_i_dim
+                in_dim = feature_i_dim
                 self.state_feature_1st_layer_weights.append(nn.Parameter(torch.zeros(feature_dim, in_dim, out_dim)))
                 self.state_feature_1st_layer_biases.append(nn.Parameter(torch.zeros(feature_dim, 1, out_dim)))
             in_dim = out_dim
@@ -152,7 +152,7 @@ class InferenceCMI(Inference):
 
     def reset_causal_graph_eval(self):
         self.mask_update_idx = 0
-        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim + 1, device=self.device)
+        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim, device=self.device)
 
     def extract_action_feature(self, action):
         """
@@ -649,9 +649,9 @@ class InferenceCMI(Inference):
         feature_dim = self.feature_dim
 
         idxes = torch.full((batch_size, feature_dim), i, dtype=torch.int64, device=self.device)
-        # self_mask = torch.arange(feature_dim, device=self.device)
+        self_mask = torch.arange(feature_dim, device=self.device)
         # each state variable must depend on itself when predicting the next time step value
-        # idxes[idxes >= self_mask] += 1
+        idxes[idxes >= self_mask] += 1
         return self.get_mask_by_id(idxes)  # (bs, feature_dim, feature_dim + 1)
 
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
@@ -781,28 +781,29 @@ class InferenceCMI(Inference):
             torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.))
         for t in range(seq_len):
             # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-            feature, target, s_1 = self.encoder(obs[:, t: t+1], s_1)
+            feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
             # add n_pred_step = 1 dim to mimic next_feature; [(bs, 1, num_colors)] * num_objects] * 3
             feature_multi = [[feature_i.unsqueeze(1) for feature_i in feature]] * 3
             target_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
             if t == 0:
                 # [(bs, 1, num_colors)] * num_objects] * 3
                 pred_next_feature = [
-                    [torch.zeros_like(feature_i) for feature_i in forward_mode]
+                    [feature_i.clone() for feature_i in forward_mode]
                     for forward_mode in feature_multi
                 ]
             else:
                 # reconstructed reward loss
-                rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + target, rew[:, t-1])
+                rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + target, rew[:, t])
                 rec_loss_seq += rec_loss
 
+                # if t == seq_len - 1:
                 # predicted reward loss
                 # [(bs, 1, num_colors)] * 2 * num_objects] * 3
                 pred_next_feature_target = [forward_mode1 + forward_mode2
                                             for forward_mode1, forward_mode2 in
                                             zip(pred_next_feature, target_multi)]
                 rec_pred_loss, rec_pred_loss_detail = \
-                    self.prediction_loss_from_multi_feature(pred_next_feature_target, rew[:, t-1: t])
+                    self.prediction_loss_from_multi_feature(pred_next_feature_target, rew[:, t: t+1])
                 rec_pred_loss_seq += rec_pred_loss
                 full_pred_loss_rew_seq += rec_pred_loss_detail["full_pred_loss_rew"]
                 causal_pred_loss_rew_seq += rec_pred_loss_detail["causal_pred_loss_rew"]
@@ -814,15 +815,23 @@ class InferenceCMI(Inference):
                 full_pred_loss_seq += loss_detail["full_pred_loss"]
                 masked_pred_loss_seq += loss_detail["masked_pred_loss"]
                 causal_pred_loss_seq += loss_detail["causal_pred_loss"]
-            # [(bs, 2 * num_colors)] * num_objects] * 3
+                if t == seq_len - 1:
+                    break
+            # # [(bs, 2 * num_colors)] * num_objects] * 3
+            # feature_cat = [
+            #     [torch.cat((feature_i, pred_next_feature_i), dim=-1).squeeze(1)
+            #      for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
+            #     for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
+            # ]
+
+            # [(bs, num_colors)] * num_objects] * 3
             feature_cat = [
-                [torch.cat((feature_i, pred_next_feature_i), dim=-1).squeeze(1)
-                 for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
-                for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
+                [feature_i.squeeze(1) for feature_i in forward_mode]
+                for forward_mode in feature_multi
             ]
             # pred_next_feature: softmax samples from pred_next_dist; [[(bs, 1, num_colors)] * num_objects] * 3
             pred_next_dist, pred_next_feature = \
-                self.forward_with_feature(feature_cat, actions[:, t: t+1], mask, forward_mode=forward_mode)
+                self.forward_with_feature(feature_cat, actions[:, t+1: t+2], mask, forward_mode=forward_mode)
             # if not self.update_num % (eval_freq * inference_gradient_steps):
             #     # only consider full and masked distributions when updating causal mask
             #     pred_next_dist = pred_next_dist[:2]
@@ -832,7 +841,7 @@ class InferenceCMI(Inference):
         loss_detail["full_pred_loss"], loss_detail["masked_pred_loss"], loss_detail["causal_pred_loss"] = (
             full_pred_loss_seq, masked_pred_loss_seq, causal_pred_loss_seq)
 
-        loss = pred_loss + rec_loss + rec_pred_loss
+        loss = pred_loss_seq + rec_loss_seq + rec_pred_loss_seq
         loss_detail = {**loss_detail, **rec_loss_detail, **rec_pred_loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
@@ -915,31 +924,34 @@ class InferenceCMI(Inference):
         eval_details = {}
         masked_pred_losses = []
         with torch.no_grad():
-            for i in range(feature_dim + 1):
+            for i in range(feature_dim):
                 mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
                 seq_len = obs.shape[1]
                 s_1 = None
                 for t in range(seq_len):
                     # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-                    feature, target, s_1 = self.encoder(obs[:, t: t + 1], s_1)
+                    feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
                     if t == seq_len - 2:
                         feature_multi = [feature] * 3
                         pred_next_feature = [
                             [feature_i.clone() for feature_i in forward_mode]
                             for forward_mode in feature_multi
                         ]
-                        # [[(bs, 2 * num_colors)] * num_objects] * 3
-                        feature_cat = [
-                            [torch.cat((feature_i, pred_next_feature_i), dim=-1)
-                             for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
-                            for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
-                        ]
+                        # # [[(bs, 2 * num_colors)] * num_objects] * 3
+                        # feature_cat = [
+                        #     [torch.cat((feature_i, pred_next_feature_i), dim=-1)
+                        #      for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
+                        #     for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
+                        # ]
+
+                        # [(bs, num_colors)] * num_objects] * 3
+                        feature_cat = feature_multi
                         if i == 0:
                             pred_next_dist, pred_next_feature = self.forward_with_feature(
-                                feature_cat, actions[:, t: t + 1], mask)
+                                feature_cat, actions[:, t+1: t+2], mask)
                         else:
                             pred_next_dist, pred_next_feature = self.forward_with_feature(
-                                feature_cat, actions[:, t: t + 1], mask, forward_mode=("masked",))
+                                feature_cat, actions[:, t+1: t+2], mask, forward_mode=("masked",))
                     if t == seq_len - 1:
                         # transition loss at last step
                         # [(bs, 1, num_colors)] * num_objects
@@ -961,7 +973,7 @@ class InferenceCMI(Inference):
             eval_details["eval_pred_loss"] = eval_pred_loss
 
         # bs * predicted_next_features * masked_current_features (without self-connection mask)
-        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim + 1)
+        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim)
 
         # clean cache
         self.use_cache = False
@@ -972,9 +984,9 @@ class InferenceCMI(Inference):
         # full_pred_loss uses all state variables + action,
         # while along the last dim, masked_pred_losses drops either one state variable or the action
         # As the losses are negative log likelihood, the masked and full are swapped around in estimating CMI
-        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim + 1)
+        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim)
         # next_jth_feature * current_ith_feature (exclude self-connection, i.e., i != j)
-        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim + 1)
+        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim)
 
         self.eval_step_CMI += CMI
         self.mask_update_idx += 1
@@ -984,19 +996,17 @@ class InferenceCMI(Inference):
         if self.mask_update_idx == eval_steps:
             self.eval_step_CMI /= eval_steps
 
-            # eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
-            # eval_step_CMI *= self.CMI_threshold
+            eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
+            eval_step_CMI *= self.CMI_threshold
 
             # (feature_dim, feature_dim), (feature_dim, feature_dim)
-            # upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
-            # eval_step_CMI[:, 1:] += upper_tri
-            # eval_step_CMI[:, :-1] += lower_tri
-            # self.eval_step_CMI[torch.eye(feature_dim, feature_dim + 1, dtype=torch.bool, device=self.device)] += self.CMI_threshold
+            upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
+            eval_step_CMI[:, 1:] += upper_tri
+            eval_step_CMI[:, :-1] += lower_tri
 
-            # self.CMI_threshold = self.CMI_threshold * eval_tau + 0.02 * (1 - eval_tau)  # Exponential smoothing
-            self.mask_CMI = self.mask_CMI * eval_tau + self.eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
+            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)
             self.mask = self.mask_CMI >= self.CMI_threshold
-            # self.mask[self.diag_mask] = True
+            self.mask[self.diag_mask] = True
 
         return eval_details
 
@@ -1150,5 +1160,5 @@ class InferenceCMI(Inference):
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             self.mask_CMI = checkpoint["mask_CMI"]
             self.mask = self.mask_CMI >= self.CMI_threshold
-            # self.mask_CMI[self.diag_mask] = self.CMI_threshold
-            # self.mask[self.diag_mask] = True
+            self.mask_CMI[self.diag_mask] = self.CMI_threshold
+            self.mask[self.diag_mask] = True

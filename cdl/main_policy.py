@@ -268,9 +268,13 @@ def train(params):
             if episode_step == 1:
                 obs_f = preprocess_obs(obs_f, params)  # convert to np.float32
                 obs = preprocess_obs(obs, params)
+                action_prev, reward_prev = np.zeros(1), np.zeros(1)
             hidden_state = {key: obs_f[key] for key in params.hidden_keys}
             info.update(hidden_state)
-            obs['act'], obs['rew'] = np.array([action], dtype=np.float32), np.array([env_reward])
+
+            obs['act'], obs['rew'] = action_prev, reward_prev
+            action_prev, reward_prev = np.array([action], dtype=np.float32), np.array([env_reward])
+            # obs['act'], obs['rew'] = np.array([action], dtype=np.float32), np.array([env_reward])
 
             next_obs_f = preprocess_obs(next_obs_f, params)
             next_obs_f['act'], next_obs_f['rew'] = np.zeros(1), np.zeros(1)

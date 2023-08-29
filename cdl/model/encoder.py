@@ -161,9 +161,11 @@ class RecurrentEncoder(RNN):
             self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
 
-    def forward(self, obs, s_0=None):
+    def forward(self, obs, episode_step, s_0=None):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+        :param episode_step: episodic step
+        :param s_0: ((layer_num, bs, hidden_layer_size)) * 2
         :return: [(bs, (n_pred_step), num_colors)] * num_objects, (full states)
                  [(bs, (n_pred_step), num_colors)] * num_objects  (full target states)
         """
@@ -190,7 +192,7 @@ class RecurrentEncoder(RNN):
             # identity encoder in the fully observable
             if len(self.hidden_ind) == 0:
                 obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-                return obs_enc[:3], obs_enc[3:]
+                return obs_enc[:3], obs_enc[3:], None
 
             """RNN fed by d-set"""
             obs = [obs_k_i
@@ -204,10 +206,8 @@ class RecurrentEncoder(RNN):
 
             # slice in action and reward from observation
             obs_act, obs_rew = obs[-2].clone(), obs[-1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
-            # mask out the last action / reward in the stacked obs
-            # obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
-            # obs_act[:, -1], obs_rew = obs_act[:, -1] * 0, obs_rew * 0
-            obs_rew = obs_rew * 0
+            # mask out the first action / reward in the stacked obs
+            obs_act = obs_act * 0 if episode_step == 0 else obs_act
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
@@ -223,10 +223,15 @@ class RecurrentEncoder(RNN):
                                      torch.unbind(obs_rew, dim=-2)]  # [(bs, stack_num, reward_dim)] * n_pred_step
 
                 # concatenate one-hot observables, action and scalar reward along the last dim
-                # [(bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)] * n_pred_step
-                obs_pred_step = [torch.cat((obses_i, acts_i, rews_i), dim=-1)
-                                 for obses_i, acts_i, rews_i in
-                                 zip(obs_obs_pred_step, obs_act_pred_step, obs_rew_pred_step)]
+                # # [(bs, stack_num, action_dim + reward_dim + num_dset_observables * num_colors)] * n_pred_step
+                # obs_pred_step = [torch.cat((acts_i, rews_i, obses_i), dim=-1)
+                #                  for acts_i, rews_i, obses_i in
+                #                  zip(obs_act_pred_step, obs_rew_pred_step, obs_obs_pred_step)]
+
+                # [(bs, stack_num, action_dim + num_dset_observables * num_colors)] * n_pred_step
+                obs_pred_step = [torch.cat((acts_i, obses_i), dim=-1)
+                                 for acts_i, obses_i in
+                                 zip(obs_act_pred_step, obs_obs_pred_step)]
 
                 obs_enc = []
                 for obs_i in obs_pred_step:
@@ -243,8 +248,11 @@ class RecurrentEncoder(RNN):
                 obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_observables * num_colors)
 
                 # concatenate one-hot observables, action and scalar reward along the last dim
-                # (bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)
-                obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
+                # # (bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)
+                # obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
+
+                # (bs, stack_num, action_dim + num_dset_observables * num_colors)
+                obs = torch.cat((obs_act, obs_obs), dim=-1)
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
@@ -273,7 +281,7 @@ def obs_encoder(params):
         recurrent_enc_params = params.encoder_params.recurrent_enc_params
         chemical_env_params = params.env_params.chemical_env_params
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
-        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim + 1
+        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
         hidden_layer_size = recurrent_enc_params.hidden_layer_size
         layer_num = recurrent_enc_params.layer_num
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
