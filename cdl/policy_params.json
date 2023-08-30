@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
+            "hidden_objects_ind": [],
             "keys_dset": ["obj0", "obj2"],
             "hidden_targets_ind": [],
             "num_objects": 3,
@@ -81,12 +81,17 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 5
+            "stack_num": 8
         }
     },
     "encoder_params": {
-        "encoder_type": "recurrent",
+        "encoder_type": "feedforward",
          "recurrent_enc_params": {
+            "layer_num": 2,
+            "hidden_layer_size": 128,
+            "dropout": 0
+         },
+        "feedforward_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
             "dropout": 0
@@ -117,7 +122,7 @@
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
             "eval_tau": 0.999,
-            "eval_freq": 400 ,
+            "eval_freq": 200 ,
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,
