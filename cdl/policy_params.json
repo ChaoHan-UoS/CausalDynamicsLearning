@@ -52,7 +52,7 @@
             "use_cuda": false,
             "max_steps": 10,
             "num_target_interventions": 3,
-            "g": "chain3",
+            "g": "full3",
             "match_type": "all",
             "dense_reward": true
         }
@@ -85,7 +85,7 @@
         }
     },
     "encoder_params": {
-        "encoder_type": "feedforward",
+        "encoder_type": "recurrent",
          "recurrent_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
@@ -126,7 +126,7 @@
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,
-            "hinge": 30.0
+            "hinge": 1.0
         },
         "nps_params": {
             "num_rule": 4,

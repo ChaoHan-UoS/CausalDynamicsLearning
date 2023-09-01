@@ -148,13 +148,13 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 elif isinstance(dist_i, torch.Tensor):
                     logits = dist_i
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
@@ -281,6 +281,8 @@ class Inference(nn.Module):
                     # [(bs, n_pred_step)] * feature_dim
                     pred_loss = [kl_divergence(next_dist_i, pred_dist_i)
                                  for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
+
+
 
                     # # Cross Entropy loss of a predicted OneHotCategorical distribution given encoded one-hot label
                     # # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
