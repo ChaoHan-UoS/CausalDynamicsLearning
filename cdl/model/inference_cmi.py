@@ -797,8 +797,8 @@ class InferenceCMI(Inference):
             else:
                 # reconstructed reward loss
                 # one-hot sample from gumbel softmax
-                # feature_one_hot = self.sample_from_distribution(feature)
-                rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + target, rew[:, t])
+                feature_one_hot = self.sample_from_distribution(feature)
+                rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
                 rec_loss_seq += rec_loss
 
                 # if t == seq_len - 1:
@@ -847,7 +847,7 @@ class InferenceCMI(Inference):
         loss_detail["full_pred_loss"], loss_detail["masked_pred_loss"], loss_detail["causal_pred_loss"] = (
             full_pred_loss_seq, masked_pred_loss_seq, causal_pred_loss_seq)
 
-        loss = pred_loss_seq + 200 * (rec_loss_seq + rec_pred_loss_seq)
+        loss = pred_loss_seq + 20 * (rec_loss_seq + rec_pred_loss_seq)
         loss_detail = {**loss_detail, **rec_loss_detail, **rec_pred_loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
@@ -915,7 +915,8 @@ class InferenceCMI(Inference):
                                  for pred_next_dist_i in pred_next_dist]
 
                             # reconstructed reward loss
-                            rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + target, rew[:, t])
+                            feature_one_hot = self.sample_from_distribution(feature)
+                            rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
 
                             # predicted reward loss
                             # [(bs, 1, num_colors)] * 2 * num_objects] * 3

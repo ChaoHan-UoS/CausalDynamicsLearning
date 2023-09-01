@@ -275,7 +275,7 @@ class Inference(nn.Module):
                 if self.training:
                     # KL loss between OneHotCategorical distributions
                     # [OneHotCategorical] * feature_dim, each distribution of shape  (bs, n_pred_step, feature_i_dim)
-                    next_feature = [OneHotCategorical(probs=next_feature_i)
+                    next_feature = [OneHotCategorical(logits=next_feature_i)
                                     for next_feature_i in next_feature]
                     # [(bs, n_pred_step)] * feature_dim
                     pred_loss = [kl_divergence(next_dist_i, pred_dist_i)
@@ -310,6 +310,7 @@ class Inference(nn.Module):
                     # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
 
                     # NLL loss of the OneHotCategorical distribution
+                    next_feature = self.sample_from_distribution(next_feature)
                     # (bs, n_pred_step, feature_dim)
                     pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
 
