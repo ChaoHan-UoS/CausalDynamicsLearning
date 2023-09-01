@@ -76,13 +76,10 @@ class InferenceCMI(Inference):
         else:
             out_dim = cmi_params.feature_fc_dims[0]
             fc_dims = cmi_params.feature_fc_dims[1:]
-            in_dim = self.feature_inner_dim[0]
-            state_feature_1st_layer_weights = nn.Parameter(torch.zeros(feature_dim, in_dim, out_dim))
-            state_feature_1st_layer_biases = nn.Parameter(torch.zeros(feature_dim, 1, out_dim))
             for feature_i_dim in self.feature_inner_dim:
                 in_dim = feature_i_dim
-                self.state_feature_1st_layer_weights.append(state_feature_1st_layer_weights)
-                self.state_feature_1st_layer_biases.append(state_feature_1st_layer_biases)
+                self.state_feature_1st_layer_weights.append(nn.Parameter(torch.zeros(feature_dim, in_dim, out_dim)))
+                self.state_feature_1st_layer_biases.append(nn.Parameter(torch.zeros(feature_dim, 1, out_dim)))
             in_dim = out_dim
 
         for out_dim in fc_dims:
@@ -101,13 +98,10 @@ class InferenceCMI(Inference):
             self.generative_weights.append(nn.Parameter(torch.zeros(feature_dim, in_dim, 2)))
             self.generative_biases.append(nn.Parameter(torch.zeros(feature_dim, 1, 2)))
         else:
-            final_dim = self.feature_inner_dim[0]
-            generative_last_layer_weights = nn.Parameter(torch.zeros(1, in_dim, final_dim))
-            generative_last_layer_biases = nn.Parameter(torch.zeros(1, 1, final_dim))
             for feature_i_dim in self.feature_inner_dim:
                 final_dim = 2 if feature_i_dim == 1 else feature_i_dim
-                self.generative_last_layer_weights.append(generative_last_layer_weights)
-                self.generative_last_layer_biases.append(generative_last_layer_biases)
+                self.generative_last_layer_weights.append(nn.Parameter(torch.zeros(1, in_dim, final_dim)))
+                self.generative_last_layer_biases.append(nn.Parameter(torch.zeros(1, 1, final_dim)))
 
     def reset_params(self):
         feature_dim = self.feature_dim
@@ -793,15 +787,15 @@ class InferenceCMI(Inference):
         perm = torch.randperm(seq_len)
         for t in range(seq_len):
             # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-            # feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
-            feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
+            feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
+            # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
             # add n_pred_step = 1 dim to mimic next_feature; [(bs, 1, num_colors)] * num_objects] * 3
             feature_multi = [[feature_i.unsqueeze(1) for feature_i in feature]] * 3
             target_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
 
             # Create negative examples
-            # feature_neg, target_neg, s_1 = self.encoder(pred_next_feature[0], obs[:, perm[t]: perm[t] + 1], t, s_1)
-            feature_neg, target_neg, s_1 = self.encoder(obs[:, perm[t]: perm[t] + 1], t, s_1)
+            feature_neg, target_neg, s_1 = self.encoder(pred_next_feature[0], obs[:, perm[t]: perm[t] + 1], t, s_1)
+            # feature_neg, target_neg, s_1 = self.encoder(obs[:, perm[t]: perm[t] + 1], t, s_1)
             feature_multi_neg = [[feature_i.unsqueeze(1) for feature_i in feature_neg]] * 3
             target_multi_neg = [[target_i.unsqueeze(1) for target_i in target_neg]] * 3
 
@@ -913,8 +907,8 @@ class InferenceCMI(Inference):
                 pred_next_feature = [[torch.zeros(bs, 1, num_colors)] * num_objects] * 3
                 for t in range(seq_len):
                     # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-                    # feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
-                    feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
+                    feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
+                    # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
                     if t == seq_len - 2:
                         feature_multi = [feature] * 3
                         # # [[(bs, 2 * num_colors)] * num_objects] * 3

@@ -52,7 +52,7 @@
             "use_cuda": false,
             "max_steps": 10,
             "num_target_interventions": 3,
-            "g": "full3",
+            "g": "chain3",
             "match_type": "all",
             "dense_reward": true
         }
@@ -85,7 +85,7 @@
         }
     },
     "encoder_params": {
-        "encoder_type": "recurrent",
+        "encoder_type": "feedforward",
          "recurrent_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
