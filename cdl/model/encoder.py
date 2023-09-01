@@ -379,12 +379,12 @@ class ForwardEncoder(MLP):
             # slice the current obs from the stack_num history
             obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])  # [(bs, (n_pred_step), num_colors)] * num_observables
 
-            # identity encoder in the fully observable
-            if len(self.hidden_ind) == 0:
-                obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-                return obs_enc[:3], obs_enc[3:], None
+            # # identity encoder in the fully observable
+            # if len(self.hidden_ind) == 0:
+            #     obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
+            #     return obs_enc[:3], obs_enc[3:], None
 
-            """RNN fed by d-set"""
+            """MLP fed by d-set"""
             # (num_objects, bs, 1, num_colors)
             pred_feature = torch.stack(pred_feature, dim=0)
 
@@ -401,6 +401,7 @@ class ForwardEncoder(MLP):
             obs_act, obs_rew = obs[-2].clone(), obs[-1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
             # mask out the first action / reward in the stacked obs
             obs_act = obs_act * 0 if episode_step == 0 else obs_act
+            obs_act = obs_act * 0
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
@@ -441,6 +442,7 @@ class ForwardEncoder(MLP):
             else:
                 pred_feature = pred_feature.permute(1, 2, 0, 3)  # (bs, 1, num_objects, num_colors)
                 pred_feature = pred_feature.reshape(pred_feature.shape[:2] + (-1,))  # (bs, 1, num_objects * num_colors)
+                pred_feature = pred_feature * 0
 
                 obs_obs = obs_obs.permute(1, 2, 0, 3)  # (bs, stack_num, num_dset_observables, num_colors)
                 obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_observables * num_colors)
@@ -453,7 +455,9 @@ class ForwardEncoder(MLP):
                 obs = torch.cat((pred_feature, obs_act, obs_obs), dim=-1)
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
-                obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
+                # obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
+                obs_enc = obs_enc.reshape(-1, self.num_objects,
+                                          self.num_colors)  # (bs, num_hidden_states, num_colors)
                 # obs_enc = F.gumbel_softmax(obs_enc, tau=10, hard=False) if self.training \
                 #     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
             obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_states
@@ -461,13 +465,14 @@ class ForwardEncoder(MLP):
             """concatenate outputs of FNN and RNN"""
             num_hidden_objects = len(self.hidden_objects_ind)
             num_obs_objects = self.num_objects - len(self.hidden_objects_ind)
-            if len(self.hidden_targets_ind) > 0:
-                obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
-                          + obs_obs_forward[self.hidden_objects_ind[0]:(num_obs_objects + self.hidden_targets_ind[0])] \
-                          + obs_enc[num_hidden_objects:] + obs_obs_forward[(num_obs_objects + self.hidden_targets_ind[0]):]
-            else:
-                obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
-                          + obs_obs_forward[self.hidden_objects_ind[0]:]
+            # if len(self.hidden_targets_ind) > 0:
+            #     obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
+            #               + obs_obs_forward[self.hidden_objects_ind[0]:(num_obs_objects + self.hidden_targets_ind[0])] \
+            #               + obs_enc[num_hidden_objects:] + obs_obs_forward[(num_obs_objects + self.hidden_targets_ind[0]):]
+            # else:
+            #     obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
+            #               + obs_obs_forward[self.hidden_objects_ind[0]:]
+            obs_enc = obs_enc + obs_obs_forward[3:]
             obs_enc = list(obs_enc)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
             return obs_enc[:3], obs_enc[3:], s_n
 
@@ -495,8 +500,8 @@ def obs_encoder(params):
                      chemical_env_params.num_colors + params.action_dim)
         hidden_layer_size = feedforward_enc_params.hidden_layer_size
         layer_num = feedforward_enc_params.layer_num
-        # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
+        logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
+        # logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
         encoder = ForwardEncoder(params, obs_shape, hidden_layer_size, layer_num, logit_shape).to(device)
     else:
         raise ValueError("Unknown encoder_type: {}".format(encoder_type))
