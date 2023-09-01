@@ -351,7 +351,7 @@ def train(params):
                         batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                         obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch , hidden_label_batch = \
                             sample_process(batch_data, params)
-                        eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch)
+                        eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch, rew_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)

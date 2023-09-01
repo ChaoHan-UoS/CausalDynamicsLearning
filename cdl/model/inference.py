@@ -152,8 +152,8 @@ class Inference(nn.Module):
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 elif isinstance(dist_i, torch.Tensor):
+                    logits = dist_i
                     if self.training:
-                        logits = dist_i
                         sample_i = F.gumbel_softmax(logits, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()

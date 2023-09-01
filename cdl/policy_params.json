@@ -85,7 +85,7 @@
         }
     },
     "encoder_params": {
-        "encoder_type": "feedforward",
+        "encoder_type": "recurrent",
          "recurrent_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,

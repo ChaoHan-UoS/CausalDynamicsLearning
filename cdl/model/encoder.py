@@ -196,9 +196,9 @@ class RecurrentEncoder(RNN):
             self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
 
-    def forward(self, pred_feature, obs, episode_step, s_0=None):
+    def forward(self, obs, episode_step, s_0=None):
         """
-        :param pred_feature: [(bs, 1, num_colors)] * num_objects
+        # :param pred_feature: [(bs, 1, num_colors)] * num_objects
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
         :param episode_step: episodic step
         :param s_0: ((layer_num, bs, hidden_layer_size)) * 2
@@ -295,7 +295,8 @@ class RecurrentEncoder(RNN):
                 # obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
 
                 # (bs, stack_num, action_dim + num_dset_observables * num_colors)
-                obs = torch.cat((pred_feature, obs_act, obs_obs), dim=-1)
+                # obs = torch.cat((pred_feature, obs_act, obs_obs), dim=-1)
+                obs = torch.cat((obs_act, obs_obs), dim=-1)
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
@@ -476,8 +477,9 @@ def obs_encoder(params):
         recurrent_enc_params = params.encoder_params.recurrent_enc_params
         chemical_env_params = params.env_params.chemical_env_params
         # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
-        obs_shape = ((chemical_env_params.num_objects + len(chemical_env_params.keys_dset)) *
-                     chemical_env_params.num_colors + params.action_dim)
+        # obs_shape = ((chemical_env_params.num_objects + len(chemical_env_params.keys_dset)) *
+        #              chemical_env_params.num_colors + params.action_dim)
+        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim
         hidden_layer_size = recurrent_enc_params.hidden_layer_size
         layer_num = recurrent_enc_params.layer_num
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
