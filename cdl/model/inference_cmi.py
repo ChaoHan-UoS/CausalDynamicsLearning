@@ -784,7 +784,8 @@ class InferenceCMI(Inference):
         pred_next_feature = [[torch.zeros(bs, 1, num_colors)] * num_objects] * 3
         for t in range(seq_len):
             # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-            feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
+            feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
+            # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
             # add n_pred_step = 1 dim to mimic next_feature; [(bs, 1, num_colors)] * num_objects] * 3
             feature_multi = [[feature_i.unsqueeze(1) for feature_i in feature]] * 3
             target_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
@@ -797,7 +798,8 @@ class InferenceCMI(Inference):
             else:
                 # reconstructed reward loss
                 # one-hot sample from gumbel softmax
-                feature_one_hot = self.sample_from_distribution(feature)
+                # feature_one_hot = self.sample_from_distribution(feature)
+                feature_one_hot = feature  # for fully observable
                 rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
                 rec_loss_seq += rec_loss
 
@@ -884,7 +886,8 @@ class InferenceCMI(Inference):
                 pred_next_feature = [[torch.zeros(bs, 1, num_colors)] * num_objects] * 3
                 for t in range(seq_len):
                     # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
-                    feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
+                    feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
+                    # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
                     if t == seq_len - 2:
                         feature_multi = [feature] * 3
                         # # [[(bs, 2 * num_colors)] * num_objects] * 3
@@ -902,7 +905,7 @@ class InferenceCMI(Inference):
                         else:
                             pred_next_dist, pred_next_feature = self.forward_with_feature(
                                 feature_cat, actions[:, t+1: t+2], mask, forward_mode=("masked",))
-                            # pred_next_feature = [pred_next_feature]
+                            pred_next_feature = [pred_next_feature]
                     if t == seq_len - 1:
                         # [(bs, 1, num_colors)] * num_objects
                         feature_ = [feature_i.unsqueeze(1) for feature_i in feature]
@@ -915,7 +918,8 @@ class InferenceCMI(Inference):
                                  for pred_next_dist_i in pred_next_dist]
 
                             # reconstructed reward loss
-                            feature_one_hot = self.sample_from_distribution(feature)
+                            # feature_one_hot = self.sample_from_distribution(feature)
+                            feature_one_hot = feature  # for fully observable
                             rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
 
                             # predicted reward loss

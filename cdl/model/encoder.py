@@ -404,6 +404,7 @@ class ForwardEncoder(MLP):
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
+                """
                 obs_obs = obs_obs.permute(1, 2, 0, 3, 4)  # (bs, stack_num, num_dset_objects, n_pred_step, num_colors)
                 obs_obs_pred_step = [obs_obs_i.reshape(obs_obs.shape[:2] + (-1,))
                                      for obs_obs_i in
@@ -436,6 +437,7 @@ class ForwardEncoder(MLP):
                         else F.one_hot(torch.argmax(obs_enc_i, dim=-1), obs_enc_i.size(-1)).float()
                     obs_enc.append(obs_enc_i)  # [(bs, num_hidden_states, num_colors)] * n_pred_step
                 obs_enc = torch.stack(obs_enc, dim=-2)  # (bs, num_hidden_states, n_pred_step, num_colors)
+                """
             else:
                 pred_feature = pred_feature.permute(1, 2, 0, 3)  # (bs, 1, num_objects, num_colors)
                 pred_feature = pred_feature.reshape(pred_feature.shape[:2] + (-1,))  # (bs, 1, num_objects * num_colors)
@@ -452,8 +454,8 @@ class ForwardEncoder(MLP):
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
-                obs_enc = F.gumbel_softmax(obs_enc, tau=10, hard=False) if self.training \
-                    else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
+                # obs_enc = F.gumbel_softmax(obs_enc, tau=10, hard=False) if self.training \
+                #     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
             obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_states
 
             """concatenate outputs of FNN and RNN"""

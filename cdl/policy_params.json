@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
+            "hidden_objects_ind": [],
             "keys_dset": ["obj0", "obj2"],
             "hidden_targets_ind": [],
             "num_objects": 3,
@@ -85,7 +85,7 @@
         }
     },
     "encoder_params": {
-        "encoder_type": "recurrent",
+        "encoder_type": "feedforward",
          "recurrent_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
@@ -107,9 +107,9 @@
     "inference_params": {
         "n_pred_step": 1,
         "batch_size": 128,
-        "lr": 1e-3,
+        "lr": 1e-4,
         "lr_scheduler_step_size": 100,
-        "lr_scheduler_gamma": 0.99,
+        "lr_scheduler_gamma": 0.999,
         "dropout": 0,
         "train_prop": 0.9,
         "residual": true,
