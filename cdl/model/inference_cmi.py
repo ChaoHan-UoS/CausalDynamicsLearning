@@ -798,8 +798,8 @@ class InferenceCMI(Inference):
             else:
                 # reconstructed reward loss
                 # one-hot sample from gumbel softmax
-                # feature_one_hot = self.sample_from_distribution(feature)
-                feature_one_hot = feature  # for fully observable
+                feature_one_hot = self.sample_from_distribution(feature)
+                # feature_one_hot = feature  # for fully observable
                 rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
                 rec_loss_seq += rec_loss
 
@@ -918,8 +918,8 @@ class InferenceCMI(Inference):
                                  for pred_next_dist_i in pred_next_dist]
 
                             # reconstructed reward loss
-                            # feature_one_hot = self.sample_from_distribution(feature)
-                            feature_one_hot = feature  # for fully observable
+                            feature_one_hot = self.sample_from_distribution(feature)
+                            # feature_one_hot = feature  # for fully observable
                             rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
 
                             # predicted reward loss
