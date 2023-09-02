@@ -122,11 +122,11 @@
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
             "eval_tau": 0.999,
-            "eval_freq": 200 ,
+            "eval_freq": 50 ,
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,
-            "hinge": 1.0
+            "hinge": 5.0
         },
         "nps_params": {
             "num_rule": 4,

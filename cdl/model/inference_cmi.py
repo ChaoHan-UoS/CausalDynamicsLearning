@@ -780,32 +780,26 @@ class InferenceCMI(Inference):
         pred_loss_seq, full_pred_loss_seq, masked_pred_loss_seq, causal_pred_loss_seq = (
             torch.tensor(0.), torch.tensor(0.), torch.tensor(0.), torch.tensor(0.))
         pred_loss_seq_neg = torch.tensor(0.)
-        pred_loss_seq_mse = torch.tensor(0.)
         num_colors, num_objects = 3, 3
         # [[(bs, 1, num_colors)] * num_objects] * 3
         pred_next_feature = [[torch.zeros(bs, 1, num_colors)] * num_objects] * 3
+
+        # Create negative examples
         perm = torch.randperm(seq_len)
+        obs_neg = obs[:, perm]
+        actions_neg = actions[:, perm]
+
         for t in range(seq_len):
+            # positive features
             # Batch(obs_i_key: (bs, 1, obs_i_shape)) -> feature: [(bs, num_colors)] * num_objects
             feature, target, s_1 = self.encoder(pred_next_feature[0], obs[:, t: t+1], t, s_1)
             # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
-            # add n_pred_step = 1 dim to mimic next_feature; [(bs, 1, num_colors)] * num_objects] * 3
-            feature_multi = [[feature_i.unsqueeze(1) for feature_i in feature]] * 3
-            target_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
 
-            # Create negative examples
-            feature_neg, target_neg, s_1 = self.encoder(pred_next_feature[0], obs[:, perm[t]: perm[t] + 1], t, s_1)
-            # feature_neg, target_neg, s_1 = self.encoder(obs[:, perm[t]: perm[t] + 1], t, s_1)
-            feature_multi_neg = [[feature_i.unsqueeze(1) for feature_i in feature_neg]] * 3
-            target_multi_neg = [[target_i.unsqueeze(1) for target_i in target_neg]] * 3
+            # negative features
+            feature_neg, target_neg, s_1 = self.encoder(pred_next_feature[0], obs_neg[:, t: t+1], t, s_1)
+            # feature_neg, target_neg, s_1 = self.encoder(obs_neg[:, t: t+1], t, s_1)
 
-            if t == 0:
-                # [[(bs, 1, num_colors)] * num_objects] * 3
-                pred_next_feature = [
-                    [feature_i.clone() for feature_i in forward_mode]
-                    for forward_mode in feature_multi
-                ]
-            else:
+            if 0 < t < seq_len - 1:
                 # reconstructed reward loss
                 # one-hot sample from gumbel softmax
                 feature_one_hot = self.sample_from_distribution(feature)
@@ -813,64 +807,60 @@ class InferenceCMI(Inference):
                 rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature_one_hot + target, rew[:, t])
                 rec_loss_seq += rec_loss
 
-                # if t == seq_len - 1:
                 # predicted reward loss
+                target_unsequeeze_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
                 # [(bs, 1, num_colors)] * 2 * num_objects] * 3
-
                 pred_next_feature_target = [forward_mode1 + forward_mode2
                                             for forward_mode1, forward_mode2 in
-                                            zip(pred_next_feature, target_multi)]
+                                            zip(pred_next_feature, target_unsequeeze_multi)]
                 rec_pred_loss, rec_pred_loss_detail = \
                     self.prediction_loss_from_multi_feature(pred_next_feature_target, rew[:, t: t+1])
                 rec_pred_loss_seq += rec_pred_loss
                 full_pred_loss_rew_seq += rec_pred_loss_detail["full_pred_loss_rew"]
                 causal_pred_loss_rew_seq += rec_pred_loss_detail["causal_pred_loss_rew"]
 
-                # transition loss
-                feature = [feature_i.unsqueeze(1) for feature_i in feature]
-                pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, feature)
-                pred_loss_mse = self.loss_mse(torch.stack(pred_next_feature[0]), torch.stack(feature)).mean()
+                # CE transition loss for positive features
+                # [(bs, 1, num_colors)] * num_objects
+                feature_unsqueeze = [feature_i.unsqueeze(1) for feature_i in feature]
+                pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, feature_unsqueeze)
                 pred_loss_seq += pred_loss
-                pred_loss_seq_mse += pred_loss_mse
                 full_pred_loss_seq += loss_detail["full_pred_loss"]
                 masked_pred_loss_seq += loss_detail["masked_pred_loss"]
                 causal_pred_loss_seq += loss_detail["causal_pred_loss"]
 
-                feature_neg = [feature_i.unsqueeze(1) for feature_i in feature_neg]
-                pred_loss_full_neg = self.loss_mse(torch.stack(feature), torch.stack(feature_neg))
-                pred_loss_full_neg = torch.max(torch.zeros_like(pred_loss_full_neg), self.cmi_params.hinge - pred_loss_full_neg)
-                pred_loss_full_neg = pred_loss_full_neg.mean()
-                pred_loss_seq_neg += pred_loss_full_neg
+                # CE transition loss for negative features
+                # (bs, n_pred_step)
+                full_pred_loss_neg, masked_pred_loss_neg, eval_pred_loss_neg = \
+                    [self.prediction_loss_from_dist(pred_next_dist_i, feature_unsqueeze)
+                     for pred_next_dist_i in pred_next_dist_neg]
+                full_pred_loss_neg = full_pred_loss_neg.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
+                eval_pred_loss_neg = eval_pred_loss_neg.sum(dim=-1).mean()
+                pred_loss_neg = full_pred_loss_neg + eval_pred_loss_neg
+                pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
+                pred_loss_seq_neg += pred_loss_neg
+            elif t == seq_len - 1:
+                break
 
-                if t == seq_len - 1:
-                    break
-            # # [(bs, 2 * num_colors)] * num_objects] * 3
-            # feature_cat = [
-            #     [torch.cat((feature_i, pred_next_feature_i), dim=-1).squeeze(1)
-            #      for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
-            #     for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
-            # ]
-
+            # transition of positive features
             # [(bs, num_colors)] * num_objects] * 3
-            feature_cat = [
-                [feature_i.squeeze(1) for feature_i in forward_mode]
-                for forward_mode in feature_multi
-            ]
+            feature_multi = [feature] * 3
             # pred_next_feature: one-hot samples from pred_next_dist; [[(bs, 1, num_colors)] * num_objects] * 3
             pred_next_dist, pred_next_feature = \
-                self.forward_with_feature(feature_cat, actions[:, t+1: t+2], mask, forward_mode=forward_mode)
-            # if not self.update_num % (eval_freq * inference_gradient_steps):
-            #     # only consider full and masked distributions when updating causal mask
-            #     pred_next_dist = pred_next_dist[:2]
+                self.forward_with_feature(feature_multi, actions[:, t+1: t+2], mask, forward_mode=forward_mode)
+
+            # transition of negative features
+            feature_multi_neg = [feature_neg] * 3
+            pred_next_dist_neg, pred_next_feature_neg = \
+                self.forward_with_feature(feature_multi_neg, actions_neg[:, t+1: t+2], mask, forward_mode=forward_mode)
+
         rec_loss_detail["rec_loss"] = rec_loss_seq
         rec_pred_loss_detail["full_pred_loss_rew"], rec_pred_loss_detail["causal_pred_loss_rew"] = (
             full_pred_loss_rew_seq, causal_pred_loss_rew_seq)
         loss_detail["full_pred_loss"], loss_detail["masked_pred_loss"], loss_detail["causal_pred_loss"] = (
             full_pred_loss_seq, masked_pred_loss_seq, causal_pred_loss_seq)
-        loss_detail["full_pred_loss_neg"] = pred_loss_seq_neg
-        loss_detail["pred_loss_seq_mse"] = pred_loss_seq_mse
+        loss_detail["pred_loss_neg"] = pred_loss_seq_neg
 
-        loss = pred_loss_seq + 20 * (rec_loss_seq + rec_pred_loss_seq) + pred_loss_seq_neg + pred_loss_seq_mse
+        loss = pred_loss_seq + 20 * (rec_loss_seq + rec_pred_loss_seq) + pred_loss_seq_neg
         loss_detail = {**loss_detail, **rec_loss_detail, **rec_pred_loss_detail}
         if not eval and torch.isfinite(loss):
             self.backprop(loss, loss_detail)
@@ -911,31 +901,21 @@ class InferenceCMI(Inference):
                     # feature, target, s_1 = self.encoder(obs[:, t: t+1], t, s_1)
                     if t == seq_len - 2:
                         feature_multi = [feature] * 3
-                        # # [[(bs, 2 * num_colors)] * num_objects] * 3
-                        # feature_cat = [
-                        #     [torch.cat((feature_i, pred_next_feature_i), dim=-1)
-                        #      for feature_i, pred_next_feature_i in zip(forward_mode1, forward_mode2)]
-                        #     for forward_mode1, forward_mode2 in zip(feature_multi, pred_next_feature)
-                        # ]
-
-                        # [(bs, num_colors)] * num_objects] * 3
-                        feature_cat = feature_multi
                         if i == 0:
                             pred_next_dist, pred_next_feature = self.forward_with_feature(
-                                feature_cat, actions[:, t+1: t+2], mask)
+                                feature_multi, actions[:, t+1: t+2], mask)
                         else:
                             pred_next_dist, pred_next_feature = self.forward_with_feature(
-                                feature_cat, actions[:, t+1: t+2], mask, forward_mode=("masked",))
+                                feature_multi, actions[:, t+1: t+2], mask, forward_mode=("masked",))
                             pred_next_feature = [pred_next_feature]
                     if t == seq_len - 1:
-                        # [(bs, 1, num_colors)] * num_objects
-                        feature_ = [feature_i.unsqueeze(1) for feature_i in feature]
-                        target_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
+                        feature_unsqueeze = [feature_i.unsqueeze(1) for feature_i in feature]
+                        target_unsqueeze_multi = [[target_i.unsqueeze(1) for target_i in target]] * 3
                         if i == 0:
                             # transition loss at last step
                             # pred_loss: (bs, n_pred_step, feature_dim)
                             full_pred_loss, masked_pred_loss, eval_pred_loss = \
-                                [self.prediction_loss_from_dist(pred_next_dist_i, feature_, keep_variable_dim=True)
+                                [self.prediction_loss_from_dist(pred_next_dist_i, feature_unsqueeze, keep_variable_dim=True)
                                  for pred_next_dist_i in pred_next_dist]
 
                             # reconstructed reward loss
@@ -947,11 +927,11 @@ class InferenceCMI(Inference):
                             # [(bs, 1, num_colors)] * 2 * num_objects] * 3
                             pred_next_feature_target = [forward_mode1 + forward_mode2
                                                         for forward_mode1, forward_mode2 in
-                                                        zip(pred_next_feature, target_multi)]
+                                                        zip(pred_next_feature, target_unsqueeze_multi)]
                             rec_pred_loss, rec_pred_loss_detail = \
-                                self.prediction_loss_from_multi_feature(pred_next_feature_target, rew[:, t: t + 1])
+                                self.prediction_loss_from_multi_feature(pred_next_feature_target, rew[:, t: t+1])
                         else:
-                            masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, feature_,
+                            masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, feature_unsqueeze,
                                                                               keep_variable_dim=True)
                 masked_pred_loss = masked_pred_loss.mean(dim=1)                         # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)

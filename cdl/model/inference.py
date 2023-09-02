@@ -148,13 +148,13 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 elif isinstance(dist_i, torch.Tensor):
                     logits = dist_i
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
@@ -273,29 +273,29 @@ class Inference(nn.Module):
                 pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
             else:
                 if self.training:
-                    # KL loss between OneHotCategorical distributions
-                    # [OneHotCategorical] * feature_dim, each distribution of shape  (bs, n_pred_step, feature_i_dim)
-                    # next_feature = [OneHotCategorical(probs=next_feature_i)  # for fully observable
-                    next_feature = [OneHotCategorical(logits=next_feature_i)
+                    # # KL loss between OneHotCategorical distributions
+                    # # [OneHotCategorical] * feature_dim, each distribution of shape  (bs, n_pred_step, feature_i_dim)
+                    # # next_feature = [OneHotCategorical(probs=next_feature_i)  # for fully observable
+                    # next_feature = [OneHotCategorical(logits=next_feature_i)
+                    #                 for next_feature_i in next_feature]
+                    # # [(bs, n_pred_step)] * feature_dim
+                    # pred_loss = [kl_divergence(next_dist_i, pred_dist_i)
+                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
+
+
+                    # Cross Entropy loss of a predicted OneHotCategorical distribution given encoded one-hot label
+                    # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
+                    next_feature = self.sample_from_distribution(next_feature)
+                    # [(bs, feature_i_dim, n_pred_step)] * feature_dim; as nn.CrossEntropyLoss() expects
+                    # the second dim of thw input shape to be the number of class
+                    next_feature = [next_feature_i.permute(0, 2, 1)
                                     for next_feature_i in next_feature]
-                    # [(bs, n_pred_step)] * feature_dim
-                    pred_loss = [kl_divergence(next_dist_i, pred_dist_i)
+                    # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                    pred_dist = [pred_dist_i.probs.permute(0, 2, 1)
+                                 for pred_dist_i in pred_dist]
+                    pred_loss = [self.loss_ce(pred_dist_i, next_dist_i)  # [(bs, n_pred_step)] * feature_dim
                                  for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-
-
-                    # # Cross Entropy loss of a predicted OneHotCategorical distribution given encoded one-hot label
-                    # # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
-                    # next_feature = self.sample_from_distribution(next_feature)
-                    # # [(bs, feature_i_dim, n_pred_step)] * feature_dim; as nn.CrossEntropyLoss() expects
-                    # # the second dim of thw input shape to be the number of class
-                    # next_feature = [next_feature_i.permute(0, 2, 1)
-                    #                 for next_feature_i in next_feature]
-                    # # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                    # pred_dist = [pred_dist_i.probs.permute(0, 2, 1)
-                    #              for pred_dist_i in pred_dist]
-                    # pred_loss = [self.loss_ce(pred_dist_i, next_dist_i)  # [(bs, n_pred_step)] * feature_dim
-                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
                     # # MSE loss between one-hot samples from OneHotCategorical distributions
                     # # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
