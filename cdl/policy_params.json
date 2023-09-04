@@ -101,7 +101,8 @@
         "decoder_type": "feedforward",
          "feedforward_dec_params": {
             "hidden_layer_size": 128,
-            "dropout": 0
+            "dropout": 0,
+            "categorical_rew": true
          }
     },
     "inference_params": {
@@ -110,6 +111,8 @@
         "lr": 1e-4,
         "lr_scheduler_step_size": 100,
         "lr_scheduler_gamma": 0.999,
+        "gumbel_temp_0": 1,
+        "gumbel_temp_decay_rate": 0.999,
         "dropout": 0,
         "train_prop": 0.9,
         "residual": true,
@@ -126,7 +129,7 @@
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.02,
-            "hinge": 5.0
+            "hinge": 3.0
         },
         "nps_params": {
             "num_rule": 4,

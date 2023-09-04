@@ -343,6 +343,7 @@ def train(params):
             inference.eval()
             encoder.eval()
             decoder.eval()
+            use_cmi = False
             if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
@@ -365,6 +366,9 @@ def train(params):
             #     print(name, value)
 
             inference.scheduler.step()
+            if (step + 1 - training_params.init_steps) % 10 == 0:
+                inference.gumbel_temp *= inference_params.gumbel_temp_decay_rate
+            print("gumbel_temperature", inference.gumbel_temp)
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()

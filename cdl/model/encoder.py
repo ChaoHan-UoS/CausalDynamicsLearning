@@ -379,10 +379,10 @@ class ForwardEncoder(MLP):
             # slice the current obs from the stack_num history
             obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])  # [(bs, (n_pred_step), num_colors)] * num_observables
 
-            # # identity encoder in the fully observable
-            # if len(self.hidden_ind) == 0:
-            #     obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-            #     return obs_enc[:3], obs_enc[3:], None
+            # identity encoder in the fully observable
+            if len(self.hidden_ind) == 0:
+                obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
+                return obs_enc[:3], obs_enc[3:], None
 
             """MLP fed by d-set"""
             # (num_objects, bs, 1, num_colors)
