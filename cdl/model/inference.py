@@ -148,7 +148,7 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=False)
+                        sample_i = F.gumbel_softmax(logits, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
@@ -267,11 +267,11 @@ class Inference(nn.Module):
                 pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
             else:
                 if self.training:
-                    # KL loss between two OneHotCategorical distributions
-                    next_feature = [OneHotCategorical(probs=next_feature_i)                # a list of distributions, [OneHotCategorical] * feature_dim,
-                                    for next_feature_i in next_feature]                    # each of shape (bs, n_pred_step, feature_i_dim)
-                    pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
-                                 for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
+                    # # KL loss between two OneHotCategorical distributions
+                    # next_feature = [OneHotCategorical(probs=next_feature_i)                # a list of distributions, [OneHotCategorical] * feature_dim,
+                    #                 for next_feature_i in next_feature]                    # each of shape (bs, n_pred_step, feature_i_dim)
+                    # pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
+                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
                     # # Cross Entropy loss between two softmax distributions
                     # next_feature = [next_feature_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
@@ -281,7 +281,11 @@ class Inference(nn.Module):
                     # pred_loss = [self.loss_ce(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                    # NLL loss of the OneHotCategorical distribution
+                    # (bs, n_pred_step, feature_dim)
+                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
+
+                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
                 else:
                     # not backprop the gradient along the path of encoder
                     # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]

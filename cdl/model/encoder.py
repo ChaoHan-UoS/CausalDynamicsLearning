@@ -25,51 +25,6 @@ def reset_layer_lstm(w, b=None):
         nn.init.uniform_(b, -bound, bound)
 
 
-class IdentityEncoder(nn.Module):
-    # extract 1D obs and concatenate them
-    def __init__(self, params):
-        super().__init__()
-
-        self.params = params
-        self.keys = [key for key in params.obs_keys_f + params.goal_keys if params.obs_spec_f[key].ndim == 1]
-        self.feature_dim = np.sum([len(params.obs_spec_f[key]) for key in self.keys])
-
-        self.continuous_state = params.continuous_state
-        self.feature_inner_dim = None
-        if not self.continuous_state:
-            self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in self.keys])
-
-        self.to(params.device)
-
-    def forward(self, obs, detach=False):
-        obs = obs[:, -1]
-        if self.continuous_state:
-            # overwrite some observations for out-of-distribution evaluation
-            if not getattr(self, "manipulation_train", True):
-                test_scale = self.manipulation_test_scale
-                obs = {k: torch.randn_like(v) * test_scale if "marker" in k else v
-                       for k, v in obs.items()}
-            obs = torch.cat([obs[k] for k in self.keys], dim=-1)
-            return obs
-        else:
-            obs = [obs_k_i
-                   for k in self.keys
-                   for obs_k_i in torch.unbind(obs[k], dim=-1)]
-            obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-                   for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim)]
-            # overwrite some observations for out-of-distribution evaluation
-            if not getattr(self, "chemical_train", True):
-                assert self.params.env_params.env_name == "Chemical"
-                assert self.params.env_params.chemical_env_params.continuous_pos
-                test_scale = self.chemical_test_scale
-                obs = [obs_i if obs_i.shape[-1] > 1 else torch.randn_like(obs_i) * test_scale for obs_i in obs]
-
-            # print('True obj 2')
-            # print(obs[2][0], '\n')
-
-            return obs[:len(self.params.obs_keys_f)], obs
-
-
 class LSTMCell(nn.Module):
     def __init__(self, num_inputs, num_hiddens, sigma=0.01):
         super().__init__()
@@ -257,6 +212,7 @@ class RecurrentEncoder(RNN):
             # mask out the last action / reward in the stacked obs
             # obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
             obs_act[:, -1], obs_rew = obs_act[:, -1] * 0, obs_rew * 0
+            # obs_act, obs_rew = obs_act * 0, obs_rew * 0
 
             obs_obs_dims = len(obs_obs.shape)
             if obs_obs_dims == 5:
@@ -283,7 +239,7 @@ class RecurrentEncoder(RNN):
                     # s_0 = s_n
 
                     obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
-                    obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=False) if self.training \
+                    obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=True) if self.training \
                         else F.one_hot(torch.argmax(obs_enc_i, dim=-1), obs_enc_i.size(-1)).float()
                     obs_enc.append(obs_enc_i)  # [(bs, num_hidden_states, num_colors)] * n_pred_step
                 obs_enc = torch.stack(obs_enc, dim=-2)  # (bs, num_hidden_states, n_pred_step, num_colors)
@@ -297,7 +253,7 @@ class RecurrentEncoder(RNN):
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
-                obs_enc = F.gumbel_softmax(obs_enc, hard=False) if self.training \
+                obs_enc = F.gumbel_softmax(obs_enc, hard=True) if self.training \
                     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
             obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_states
 
@@ -312,7 +268,7 @@ class RecurrentEncoder(RNN):
                 obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
                           + obs_obs_forward[self.hidden_objects_ind[0]:]
             obs_enc = list(obs_enc)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-            return obs_enc[:3], obs_enc[3:]
+            return obs_enc[:self.num_objects], obs_enc[self.num_objects:]
 
 
 def obs_encoder(params):
@@ -328,11 +284,6 @@ def obs_encoder(params):
         # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
         logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
         encoder = RecurrentEncoder(params, obs_shape, hidden_layer_size, layer_num, logit_shape).to(device)
-        # print('\nTrainable parameters of the recurrent encoder')
-        # for name, value in encoded_obs.named_parameters():
-        #     print(name, value.shape)
-    elif encoder_type == "identity":
-        encoder = IdentityEncoder(params).to(device)
     else:
         raise ValueError("Unknown encoder_type: {}".format(encoder_type))
     return encoder

@@ -2,7 +2,7 @@
     "info": "chemical_full_dynamics_cmi",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
-    "seed": 4,
+    "seed": 1,
     "cuda_id": 0,
     "env_params": {
         "env_name": "Chemical",
@@ -96,11 +96,12 @@
         "decoder_type": "feedforward",
          "feedforward_dec_params": {
             "hidden_layer_size": 128,
-            "dropout": 0
+            "dropout": 0,
+            "categorical_rew": true
          }
     },
     "inference_params": {
-        "n_pred_step": 2,
+        "n_pred_step": 1,
         "batch_size": 128,
         "lr": 1e-4,
         "lr_scheduler_step_size": 100,

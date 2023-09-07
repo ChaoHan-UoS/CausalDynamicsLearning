@@ -23,6 +23,7 @@ from env.physical_env import Coord
 graphs = {
     'chain3': '0->1->2->0',
     'fork3': '0->{1-2}',
+    'fork5': '0->{1-4}',
     'collider3': '{0-1}->2',
     'collider4': '{0-2}->3',
     'collider5': '{0-3}->4',

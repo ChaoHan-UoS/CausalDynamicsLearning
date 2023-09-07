@@ -60,7 +60,7 @@ def rew_decoder(params):
         feedforward_dec_params = params.decoder_params.feedforward_dec_params
         chemical_env_params = params.env_params.chemical_env_params
         obs_shape = 2 * chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape = 1
+        logit_shape = (chemical_env_params.num_colors + 1) if feedforward_dec_params.categorical_rew else 1
         device = params.device
         hidden_layer_size = feedforward_dec_params.hidden_layer_size
         dropout = feedforward_dec_params.dropout
