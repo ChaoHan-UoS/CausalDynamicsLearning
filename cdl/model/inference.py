@@ -150,14 +150,14 @@ class Inference(nn.Module):
                     logits = dist_i.logits
                     if self.training:
                         # sample_i = F.gumbel_softmax(logits, tau=self.gumbel_temp, hard=True)
-                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 elif isinstance(dist_i, torch.Tensor):
                     logits = dist_i
                     if self.training:
                         # sample_i = F.gumbel_softmax(logits, tau=self.gumbel_temp, hard=True)
-                        sample_i = F.gumbel_softmax(logits, tau=10, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:
@@ -300,23 +300,27 @@ class Inference(nn.Module):
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
 
-                    # MSE loss between one-hot samples from OneHotCategorical distributions
-                    # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
-                    next_feature = self.sample_from_distribution(next_feature)
-                    pred_feature = self.sample_from_distribution(pred_dist)
-                    pred_loss = [self.loss_mse(pred_feature_i, next_feature_i)
-                                 for pred_feature_i, next_feature_i in zip(pred_feature, next_feature)]
-                    # [(bs, n_pred_step)] * feature_dim
-                    pred_loss = [pred_loss_i.mean(dim=-1) for pred_loss_i in pred_loss]
+                    # # MSE loss between one-hot samples from OneHotCategorical distributions
+                    # # [(bs, n_pred_step, feature_i_dim)] * feature_dim; one-hot along the last dim
+                    # next_feature = self.sample_from_distribution(next_feature)
+                    # pred_feature = self.sample_from_distribution(pred_dist)
+                    # pred_loss = [self.loss_mse(pred_feature_i, next_feature_i)
+                    #              for pred_feature_i, next_feature_i in zip(pred_feature, next_feature)]
+                    # # [(bs, n_pred_step)] * feature_dim
+                    # pred_loss = [pred_loss_i.mean(dim=-1) for pred_loss_i in pred_loss]
+
+                    # NLL loss of the OneHotCategorical distribution
+                    # (bs, n_pred_step, feature_dim)
+                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
 
 
-                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
                 else:
                     # not backprop the gradient along the path of encoder
                     # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
 
                     # NLL loss of the OneHotCategorical distribution
-                    next_feature = self.sample_from_distribution(next_feature)
+                    # next_feature = self.sample_from_distribution(next_feature)
                     # (bs, n_pred_step, feature_dim)
                     pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
 

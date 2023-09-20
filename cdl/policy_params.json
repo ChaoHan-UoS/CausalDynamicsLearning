@@ -81,7 +81,7 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 8
+            "stack_num": 3
         }
     },
     "encoder_params": {

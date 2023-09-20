@@ -382,7 +382,14 @@ class ForwardEncoder(MLP):
             # identity encoder in the fully observable
             if len(self.hidden_ind) == 0:
                 obs_enc = list(obs_obs_forward)  # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-                return obs_enc[:3], obs_enc[3:], None
+                return obs_enc[:self.num_objects], obs_enc[self.num_objects:], None
+
+            obs_obs_forward = list(obs_obs_forward)
+            obs_hidden = torch.zeros_like(obs_obs_forward[0])  # (bs, (n_pred_step), num_colors)
+            # [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
+            obs_enc = (obs_obs_forward[:self.hidden_objects_ind[0]] + [obs_hidden] +
+                       obs_obs_forward[self.hidden_objects_ind[0]:])
+            return obs_enc[:self.num_objects], obs_enc[self.num_objects:], None
 
             """MLP fed by d-set"""
             # (num_objects, bs, 1, num_colors)
