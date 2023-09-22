@@ -21,7 +21,7 @@ from env.drawing import render_cubes, get_colors_and_weights
 from env.physical_env import Coord
 
 graphs = {
-    'chain3': '0->1->2->0',
+    'chain3': '0->1->2',
     'fork3': '0->{1-2}',
     'collider3': '{0-1}->2',
     'collider4': '{0-2}->3',
@@ -367,8 +367,8 @@ class Chemical(gym.Env):
         num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
         self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
-        # self.adjacency_matrix += torch.eye(self.num_objects)
-        self.adjacency_matrix[0, 0] = 1
+        self.adjacency_matrix += torch.eye(self.num_objects)
+        # self.adjacency_matrix[0, 0] = 1
         print(self.adjacency_matrix)
         self.reset()
 
@@ -525,7 +525,8 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            random_color = self.np_random.integers(0, self.num_colors)
+            # random_color = self.np_random.integers(0, self.num_colors)
+            random_color = range(self.num_colors)[i]
             self.object_to_color[i][random_color] = 1
 
         if self.movement == 'Dynamic':
