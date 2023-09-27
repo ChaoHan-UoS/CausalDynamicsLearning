@@ -29,6 +29,7 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
+
         # print('\nTrainable parameters within InferenceCMI class')
         # for name, value in self.named_parameters():
         #     print(name, value.shape)
@@ -130,7 +131,6 @@ class InferenceCMI(Inference):
         self.mask_CMI = torch.ones(feature_dim, feature_dim + 1, device=device) * self.CMI_threshold
         # boolean adjacency matrix that masks parent features to compute causal_dist and correspondingly causal_pred_loss
         self.mask = torch.ones(feature_dim, feature_dim + 1, dtype=torch.bool, device=device)
-        # self.mask = torch.tensor([[1, 0, 0, 1], [1, 1, 0, 0], [0, 1, 0, 1]], dtype=torch.bool, device=device)
         self.CMI_history = []
 
     def init_abstraction(self):
@@ -152,7 +152,7 @@ class InferenceCMI(Inference):
 
     def reset_causal_graph_eval(self):
         self.mask_update_idx = 0
-        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim + 1, device=self.device)
+        self.eval_step_CMI = torch.zeros(self.feature_dim, self.feature_dim, device=self.device)
 
     def extract_action_feature(self, action):
         """
@@ -648,9 +648,9 @@ class InferenceCMI(Inference):
         feature_dim = self.feature_dim
 
         idxes = torch.full((batch_size, feature_dim), i, dtype=torch.int64, device=self.device)
-        # self_mask = torch.arange(feature_dim, device=self.device)
+        self_mask = torch.arange(feature_dim, device=self.device)
         # each state variable must depend on itself when predicting the next time step value
-        # idxes[idxes >= self_mask] += 1
+        idxes[idxes >= self_mask] += 1
         return self.get_mask_by_id(idxes)  # (bs, feature_dim, feature_dim + 1)
 
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
@@ -783,7 +783,6 @@ class InferenceCMI(Inference):
         eval_freq = self.cmi_params.eval_freq
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
-        # forward_mode = ("full", "masked")
         bs = actions.size(0)
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
@@ -802,18 +801,17 @@ class InferenceCMI(Inference):
         # pred_next_feature: softmax samples from pred_next_dist
         pred_next_dist, pred_next_feature = \
             self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
-        # pred_next_dist_neg, pred_next_feature_neg = \
-        #     self.forward_with_feature(feature_neg, actions, mask, forward_mode=forward_mode)
+        pred_next_dist_neg, pred_next_feature_neg = \
+            self.forward_with_feature(feature_neg, actions, mask, forward_mode=forward_mode)
 
-        # only consider full and masked distributions when updating causal mask
-        if not self.update_num % (eval_freq * inference_gradient_steps):
-            pred_next_dist = pred_next_dist[:2]
+        # # only consider full and masked distributions when updating causal mask
+        # if not self.update_num % (eval_freq * inference_gradient_steps):
+        #     pred_next_dist = pred_next_dist[:2]
         #     pred_next_dist_neg = pred_next_dist_neg[:2]
 
         # Transition loss for positive features
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
 
-        """
         # Transition loss for negative features
         # (bs, n_pred_step)
         full_pred_loss_neg, masked_pred_loss_neg, eval_pred_loss_neg = \
@@ -823,7 +821,6 @@ class InferenceCMI(Inference):
         eval_pred_loss_neg = eval_pred_loss_neg.sum(dim=-1).mean()
         pred_loss_neg = full_pred_loss_neg + eval_pred_loss_neg
         pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
-        """
 
         # Reconstructed reward loss
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
@@ -879,8 +876,8 @@ class InferenceCMI(Inference):
         with torch.no_grad():
             feature, feature_target = self.encoder(obs)
             next_feature, next_feature_target = self.encoder(next_obses)
-            for i in range(feature_dim + 1):
-                mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
+            for i in range(feature_dim):
+                mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim)
                 if i == 0:
                     # Transition loss
                     pred_next_dists, _ = self.forward_with_feature(feature, actions, mask)
@@ -908,7 +905,7 @@ class InferenceCMI(Inference):
             eval_details["eval_next_rec_loss"] = next_rec_loss
 
         # bs * predicted_next_features * masked_current_features (without self-connection mask)
-        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim + 1)
+        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim)
 
         # clean cache
         self.use_cache = False
@@ -919,9 +916,9 @@ class InferenceCMI(Inference):
         # full_pred_loss uses all state variables + action,
         # while along the last dim, masked_pred_losses drops either one state variable or the action
         # As the losses are negative log likelihood, the masked and full are swapped around in estimating CMI
-        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim + 1)
+        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim)
         # next_jth_feature * current_ith_feature (exclude self-connection, i.e., i != j)
-        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim + 1)
+        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim)
 
         self.eval_step_CMI += CMI
         self.mask_update_idx += 1
@@ -931,17 +928,21 @@ class InferenceCMI(Inference):
         if self.mask_update_idx == eval_steps:
             self.eval_step_CMI /= eval_steps
 
-            # eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
-            # eval_step_CMI *= self.CMI_threshold
+            eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
+            eval_step_CMI *= self.CMI_threshold
 
             # (feature_dim, feature_dim), (feature_dim, feature_dim)
-            # upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
-            # eval_step_CMI[:, 1:] += upper_tri
-            # eval_step_CMI[:, :-1] += lower_tri
+            upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
+            eval_step_CMI[:, 1:] += upper_tri
+            eval_step_CMI[:, :-1] += lower_tri
 
+            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
+            self.mask = self.mask_CMI >= self.CMI_threshold
+            self.mask[self.diag_mask] = True
+
+            """
             self.mask_CMI = self.mask_CMI * eval_tau + self.eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
             self.mask = self.mask_CMI >= self.CMI_threshold
-            # self.mask[self.diag_mask] = True
 
             # ensure each object has at least one parent
             mask_CMI_max, mask_CMI_max_ids = self.mask_CMI.max(dim=1)
@@ -949,6 +950,7 @@ class InferenceCMI(Inference):
             for i, v in enumerate(mask_CMI_max):
                 if v < self.CMI_threshold:
                     self.mask[i, mask_CMI_max_ids[i]] = True
+            """
 
         return eval_details
 
@@ -1102,5 +1104,5 @@ class InferenceCMI(Inference):
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             self.mask_CMI = checkpoint["mask_CMI"]
             self.mask = self.mask_CMI >= self.CMI_threshold
-            # self.mask_CMI[self.diag_mask] = self.CMI_threshold
-            # self.mask[self.diag_mask] = True
+            self.mask_CMI[self.diag_mask] = self.CMI_threshold
+            self.mask[self.diag_mask] = True

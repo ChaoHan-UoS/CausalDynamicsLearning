@@ -81,12 +81,17 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 5
+            "stack_num": 3
         }
     },
     "encoder_params": {
-        "encoder_type": "recurrent",
+        "encoder_type": "feedforward",
          "recurrent_enc_params": {
+            "layer_num": 2,
+            "hidden_layer_size": 128,
+            "dropout": 0
+         },
+          "feedforward_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
             "dropout": 0
@@ -121,7 +126,7 @@
             "eval_freq": 400 ,
             "eval_steps": 1,
             "eval_batch_size": 64,
-            "CMI_threshold": 0.02,
+            "CMI_threshold": 0.05,
             "hinge": 30.0
         },
         "nps_params": {
