@@ -41,9 +41,9 @@ class InferenceCMI(Inference):
         # model params
         continuous_state = self.continuous_state
 
-        self.action_dim = action_dim = params.action_dim
-        # self.num_objects = params.env_params.chemical_env_params.num_objects
-        # self.action_dim = action_dim = self.num_objects  # RNN reconstruct the full action dim
+        # self.action_dim = action_dim = params.action_dim
+        self.num_objects = params.env_params.chemical_env_params.num_objects
+        self.action_dim = action_dim = self.num_objects  # encoder maps to the full action dim
         self.feature_dim = feature_dim = self.encoder.feature_dim
         if not self.continuous_state:
             self.feature_inner_dim = self.encoder.feature_inner_dim
@@ -793,10 +793,10 @@ class InferenceCMI(Inference):
         # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
         next_feature, next_feature_target = self.encoder(next_obses)
 
-        # Negative features
-        perm = torch.randperm(bs)
-        obs_neg = obs[perm]
-        feature_neg, feature_target_neg = self.encoder(obs_neg)
+        # # Negative features
+        # perm = torch.randperm(bs)
+        # obs_neg = obs[perm]
+        # feature_neg, feature_target_neg = self.encoder(obs_neg)
 
         # Transition of positive and negative features
         # pred_next_feature: softmax samples from pred_next_dist
@@ -808,7 +808,7 @@ class InferenceCMI(Inference):
         # only consider full and masked distributions when updating causal mask
         if not self.update_num % (eval_freq * inference_gradient_steps):
             pred_next_dist = pred_next_dist[:2]
-        #     pred_next_dist_neg = pred_next_dist_neg[:2]
+            # pred_next_dist_neg = pred_next_dist_neg[:2]
 
         # Transition loss for positive features
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
@@ -816,13 +816,14 @@ class InferenceCMI(Inference):
         """
         # Transition loss for negative features
         # (bs, n_pred_step)
-        full_pred_loss_neg, masked_pred_loss_neg, eval_pred_loss_neg = \
+        full_pred_loss_neg, masked_pred_loss_neg, causal_pred_loss_neg = \
             [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
              for pred_next_dist_i in pred_next_dist_neg]
         full_pred_loss_neg = full_pred_loss_neg.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
-        eval_pred_loss_neg = eval_pred_loss_neg.sum(dim=-1).mean()
-        pred_loss_neg = full_pred_loss_neg + eval_pred_loss_neg
+        causal_pred_loss_neg = causal_pred_loss_neg.sum(dim=-1).mean()
+        pred_loss_neg = full_pred_loss_neg + causal_pred_loss_neg
         pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
+        loss_detail["pred_loss_neg"] = pred_loss_neg
         """
 
         # Reconstructed reward loss
@@ -839,8 +840,8 @@ class InferenceCMI(Inference):
             self.prediction_loss_from_multi_feature(pred_next_feature_target, next_rews)
         """
 
-        # loss = pred_loss
         # loss = pred_loss + pred_loss_neg + 20 * (rec_loss + next_rec_loss + rec_pred_loss)
+        # loss = pred_loss + pred_loss_neg + 20 * (rec_loss + next_rec_loss)
         # loss = rec_loss
         # loss = pred_loss + pred_loss_neg
         loss = pred_loss + 20 * (rec_loss + next_rec_loss)

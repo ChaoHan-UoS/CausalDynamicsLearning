@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 np.set_printoptions(precision=3, suppress=True)
-torch.set_printoptions(precision=3, sci_mode=False)
+torch.set_printoptions(precision=6, sci_mode=False)
 
 from model.inference_mlp import InferenceMLP
 from model.inference_gnn import InferenceGNN

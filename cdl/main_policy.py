@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 np.set_printoptions(precision=3, suppress=True)
-torch.set_printoptions(precision=3, sci_mode=False)
+torch.set_printoptions(precision=5, sci_mode=False)
 
 from model.inference_mlp import InferenceMLP
 from model.inference_gnn import InferenceGNN
@@ -23,7 +23,7 @@ from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
-from model.encoder import obs_encoder
+from model.encoder import obs_encoder, act_encoder
 from model.decoder import rew_decoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
@@ -335,6 +335,7 @@ def train(params):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch =\
                     sample_process(batch_data, params)
+                actions_batch = act_encoder(actions_batch, env, params)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
                                                next_rews_batch, hidden_label_batch)
                 loss_details["inference"].append(loss_detail)
@@ -353,13 +354,16 @@ def train(params):
                         batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                         obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
                             sample_process(batch_data, params)
+                        actions_batch = act_encoder(actions_batch, env, params)
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch,
                                                                rew_batch, next_rews_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
+                        print("mask_CMI", inference.mask_CMI)
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
                         sample_process(batch_data, params)
+                    actions_batch = act_encoder(actions_batch, env, params)
                     loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
                                                    next_rews_batch, hidden_label_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
@@ -368,6 +372,9 @@ def train(params):
             #     print(name, value)
 
             inference.scheduler.step()
+            if (step + 1 - training_params.init_steps) % 100 == 0:
+                encoder.gumbel_temp *= params.encoder_params.feedforward_enc_params.gumbel_temp_decay_rate
+                print("gumbel_temperature", encoder.gumbel_temp)
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()

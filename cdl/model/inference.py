@@ -44,7 +44,7 @@ class Inference(nn.Module):
         self.to(device)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
         self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
-                                             gamma=inference_params.lr_scheduler_gamma, verbose=True)
+                                             gamma=inference_params.lr_scheduler_gamma, verbose=False)
         self.dropout = nn.Dropout(p=inference_params.dropout)
 
         self.load(params.training_params.load_inference, device)
@@ -148,7 +148,7 @@ class Inference(nn.Module):
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
                     if self.training:
-                        sample_i = F.gumbel_softmax(logits, hard=True)
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
                         sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
                 else:

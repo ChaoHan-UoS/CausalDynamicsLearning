@@ -313,6 +313,7 @@ class ForwardEncoder(MLP):
         self.hidden_ind = params.hidden_ind
         self.num_objects = params.env_params.chemical_env_params.num_objects
         self.num_colors = params.env_params.chemical_env_params.num_colors
+        self.gumbel_temp = params.encoder_params.feedforward_enc_params.gumbel_temp_0
 
         # d-set keys and all observable keys
         self.keys_dset = params.env_params.chemical_env_params.keys_dset
@@ -413,7 +414,7 @@ class ForwardEncoder(MLP):
                     # s_0 = s_n
 
                     obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
-                    obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=True) if self.training \
+                    obs_enc_i = F.gumbel_softmax(obs_enc_i, tau=self.gumbel_temp, hard=True) if self.training \
                         else F.one_hot(torch.argmax(obs_enc_i, dim=-1), obs_enc_i.size(-1)).float()
                     obs_enc.append(obs_enc_i)  # [(bs, num_hidden_states, num_colors)] * n_pred_step
                 obs_enc = torch.stack(obs_enc, dim=-2)  # (bs, num_hidden_states, n_pred_step, num_colors)
@@ -430,7 +431,7 @@ class ForwardEncoder(MLP):
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
                 obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
-                obs_enc = F.gumbel_softmax(obs_enc, hard=True) if self.training \
+                obs_enc = F.gumbel_softmax(obs_enc, tau=self.gumbel_temp, hard=True) if self.training \
                     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
             obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_states
 
@@ -474,3 +475,16 @@ def obs_encoder(params):
     else:
         raise ValueError("Unknown encoder_type: {}".format(encoder_type))
     return encoder
+
+
+def act_encoder(actions_batch, env, params):
+    """
+    :param actions_batch: (bs, n_pred_step, action_dim)
+    :return: (bs, n_pred_step, num_objects)
+    """
+    a_ids = actions_batch.view(-1).to(torch.int64)
+    actions_batch_enc = torch.tensor([env.partial_act_dims[idx] for idx in a_ids],
+                                     dtype=torch.int64, device=params.device)
+    actions_batch_enc = actions_batch_enc.view(actions_batch.shape)
+
+    return actions_batch_enc

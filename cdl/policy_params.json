@@ -1,8 +1,8 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys_f": ["obj0", "obj1", "obj2"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
-    "seed": 1,
+    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4", "obj5"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4", "target_obj5"],
+    "seed": 5,
     "cuda_id": 0,
     "env_params": {
         "env_name": "Chemical",
@@ -36,9 +36,9 @@
         },
         "chemical_env_params": {
             "hidden_objects_ind": [1],
-            "keys_dset": ["obj0", "obj2"],
+            "keys_dset": ["obj2"],
             "hidden_targets_ind": [],
-            "num_objects": 3,
+            "num_objects": 6,
             "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
@@ -52,7 +52,7 @@
             "use_cuda": false,
             "max_steps": 10,
             "num_target_interventions": 3,
-            "g": "chain3",
+            "g": "chain6",
             "match_type": "all",
             "dense_reward": true
         }
@@ -64,8 +64,8 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 60000,
-        "enc_pretrain_steps": 50000,
+        "total_steps": 160000,
+        "enc_pretrain_steps": 150000,
         "init_steps": 10000,
         "collect_env_step": true,
         "supervised_encoder": false,
@@ -94,8 +94,10 @@
           "feedforward_enc_params": {
             "layer_num": 2,
             "hidden_layer_size": 128,
-            "dropout": 0
-         }
+            "dropout": 0,
+            "gumbel_temp_0": 3,
+            "gumbel_temp_decay_rate": 1
+          }
     },
     "decoder_params": {
         "decoder_type": "feedforward",
@@ -123,11 +125,11 @@
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
             "eval_tau": 0.999,
-            "eval_freq": 400 ,
+            "eval_freq": 1000,
             "eval_steps": 1,
             "eval_batch_size": 64,
-            "CMI_threshold": 0.05,
-            "hinge": 30.0
+            "CMI_threshold": 0.03,
+            "hinge": 10.0
         },
         "nps_params": {
             "num_rule": 4,
