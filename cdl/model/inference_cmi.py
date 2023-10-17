@@ -15,10 +15,10 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class InferenceCMI(Inference):
-    def __init__(self, encoder, decoder1, params):
+    def __init__(self, encoder, decoder, params):
         self.cmi_params = params.inference_params.cmi_params
         self.init_graph(params, encoder)
-        super(InferenceCMI, self).__init__(encoder, decoder1, params)
+        super(InferenceCMI, self).__init__(encoder, decoder, params)
         self.causal_pred_reward_mean = 0
         self.causal_pred_reward_std = 1
         self.pred_diff_reward_std = 1
@@ -48,8 +48,8 @@ class InferenceCMI(Inference):
         if not self.continuous_state:
             self.feature_inner_dim = self.encoder.feature_inner_dim
 
-        self.action_feature_weights = nn.ParameterList()  # [(feature_dim, in_dim_i, out_dim_i)] * len(feature_fc_dims)
-        self.action_feature_biases = nn.ParameterList()  # [(feature_dim, 1, out_dim_i)] * len(feature_fc_dims)
+        self.action_feature_weights = nn.ParameterList()  # [(feature_dim * 1, in_dim_i, out_dim_i)] * len(feature_fc_dims)
+        self.action_feature_biases = nn.ParameterList()  # [(feature_dim * 1, 1, out_dim_i)] * len(feature_fc_dims)
         self.state_feature_weights = nn.ParameterList()  # (feature_dim * feature_dim, in_dim_i, out_dim_i) * len(feature_fc_dims[1:]) for discrete state space
         self.state_feature_biases = nn.ParameterList()  # (feature_dim * feature_dim, 1, out_dim_i) * len(feature_fc_dims[1:]) for discrete state space
         self.generative_weights = nn.ParameterList()  # [(feature_dim, in_dim_i, out_dim_i)] * len(generative_fc_dims)
@@ -705,16 +705,15 @@ class InferenceCMI(Inference):
         """
         calculate reconstruction loss from decoded reward(s)
         :param feature: [(bs, (n_pred_step), num_colors)] *  2 * num_objects
-        :param rew: (bs, (n_pred_step), reward_dim)
+        :param rew: (bs, (n_pred_step), 1)
         :return rec_loss: scalar tensor
                 rec_loss_detail: {"loss_name": loss_value}
         """
         if rew is None:
             return 0, {}
 
-        rew_unnorm = rew * self.feature_inner_dim[0]
         # (bs, (n_pred_step))
-        rew_unnorm = rew_unnorm.squeeze(dim=-1).long()
+        rew_unnorm = (rew * self.feature_dim).squeeze(dim=-1).long()
 
         # (bs, (n_pred_step), reward_dim)
         rew_feature = self.decoder(feature)
@@ -787,44 +786,60 @@ class InferenceCMI(Inference):
         bs = actions.size(0)
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
-        # Positive features
-        # feature: [(bs, num_colors)] * num_objects
+        # feature/feature_target: [(bs, num_colors)] * num_objects
         feature, feature_target = self.encoder(obs)
-        # next_feature: [(bs, n_pred_step, num_colors)] * num_objects
-        next_feature, next_feature_target = self.encoder(next_obses)
+        # next_feature/next_feature_target: [(bs, n_pred_step, num_colors)] * num_objects
+        # next_full_dist: [(bs, n_pred_step, num_colors)] * num_hidden_objects
+        # next_masked_dists: [[(bs, n_pred_step, num_colors)] * num_hidden_objects] * (num_dset_obs + 1)
+        next_feature, next_feature_target, next_full_dist, next_masked_dists = self.encoder(next_obses)
 
-        # # Negative features
-        # perm = torch.randperm(bs)
-        # obs_neg = obs[perm]
-        # feature_neg, feature_target_neg = self.encoder(obs_neg)
-
-        # Transition of positive and negative features
+        # Transition of features
         # pred_next_feature: softmax samples from pred_next_dist
         pred_next_dist, pred_next_feature = \
             self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
-        # pred_next_dist_neg, pred_next_feature_neg = \
-        #     self.forward_with_feature(feature_neg, actions, mask, forward_mode=forward_mode)
+        # [(bs, n_pred_step, num_colors)] * num_hidden_objects
+        pred_next_feature_ = [pred_next_feature[0][i] for i in self.encoder.hidden_objects_ind]
 
         # only consider full and masked distributions when updating causal mask
         if not self.update_num % (eval_freq * inference_gradient_steps):
             pred_next_dist = pred_next_dist[:2]
-            # pred_next_dist_neg = pred_next_dist_neg[:2]
+
+        masked_pred_losses = []
+        # iterate over (num_dset_obs + 1) masked NLLs
+        for i in range(len(next_masked_dists)):
+            if i == 0:
+                # NLL full_pred_loss: (bs, n_pred_step, num_hidden_objects)
+                full_pred_loss = self.prediction_loss_from_dist(next_full_dist, pred_next_feature_,
+                                                                keep_variable_dim=True)
+            # NLL masked_pred_loss: (bs, n_pred_step, num_hidden_objects)
+            masked_pred_loss = self.prediction_loss_from_dist(next_masked_dists[i], pred_next_feature_,
+                                                              keep_variable_dim=True)
+            masked_pred_loss = masked_pred_loss.mean(dim=1)  # (bs, num_hidden_objects)
+            masked_pred_losses.append(masked_pred_loss)  # [(bs, num_hidden_objects)] * (num_dset_obs + 1)
+        '''
+        full_pred_loss = full_pred_loss.mean(dim=1)[..., None]  # (bs, num_hidden_objects, 1)
+        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)  # (bs, num_hidden_objects, num_dset_obs + 1)
+
+        CMI = masked_pred_losses - full_pred_loss  # (bs, num_hidden_objects, num_dset_obs + 1)
+        CMI = CMI.mean(dim=0)  # (num_hidden_objects, num_dset_obs + 1)
+        # optimize CMI larger than CMI_threshold
+        cmi_loss = torch.maximum(torch.zeros_like(CMI), self.cmi_params.CMI_threshold - CMI)
+        cmi_loss = cmi_loss.sum()  # scalar
+        '''
+
+        # (bs, num_hidden_objects)
+        full_ll_loss = -full_pred_loss.mean(dim=1)
+        masked_ll_loss_next_o2 = -masked_pred_losses[1]
+        masked_ll_loss_curr_o2 = -masked_pred_losses[0]
+
+        # scalar
+        full_ll_loss = full_ll_loss.mean(dim=0).sum()
+        masked_ll_loss_next_o2 = masked_ll_loss_next_o2.mean(dim=0).sum()
+        masked_ll_loss_curr_o2 = masked_ll_loss_curr_o2.mean(dim=0).sum()
+
 
         # Transition loss for positive features
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
-
-        """
-        # Transition loss for negative features
-        # (bs, n_pred_step)
-        full_pred_loss_neg, masked_pred_loss_neg, causal_pred_loss_neg = \
-            [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
-             for pred_next_dist_i in pred_next_dist_neg]
-        full_pred_loss_neg = full_pred_loss_neg.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
-        causal_pred_loss_neg = causal_pred_loss_neg.sum(dim=-1).mean()
-        pred_loss_neg = full_pred_loss_neg + causal_pred_loss_neg
-        pred_loss_neg = torch.max(torch.zeros_like(pred_loss_neg), self.cmi_params.hinge - pred_loss_neg)
-        loss_detail["pred_loss_neg"] = pred_loss_neg
-        """
 
         # Reconstructed reward loss
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
@@ -841,12 +856,23 @@ class InferenceCMI(Inference):
         """
 
         # loss = pred_loss + pred_loss_neg + 20 * (rec_loss + next_rec_loss + rec_pred_loss)
-        # loss = pred_loss + pred_loss_neg + 20 * (rec_loss + next_rec_loss)
-        # loss = rec_loss
-        # loss = pred_loss + pred_loss_neg
-        loss = pred_loss + 20 * (rec_loss + next_rec_loss)
+        rec_loss *= 10
+        next_rec_loss *= 10
+        # cmi_loss *= 10
+        full_ll_loss *= 10
+        masked_ll_loss_curr_o2 *= 10
+        masked_ll_loss_next_o2 *= 10
+        loss = pred_loss + rec_loss + next_rec_loss
+        # loss = pred_loss + rec_loss + next_rec_loss - full_ll_loss - masked_ll_loss_curr_o2 + masked_ll_loss_next_o2
+        # loss = pred_loss + rec_loss + next_rec_loss + cmi_loss
 
-        # loss_detail["pred_loss_neg"] = pred_loss_neg
+        # loss_detail["enc_CMI"] = CMI[0, 0]
+        # loss_detail["enc_cmi_loss"] = cmi_loss
+        loss_detail["full_ll_loss"] = full_ll_loss
+        loss_detail["masked_ll_loss_curr_o2"] = masked_ll_loss_curr_o2
+        loss_detail["masked_ll_loss_next_o2"] = masked_ll_loss_next_o2
+        rec_loss_detail["rec_loss"] = rec_loss
+        next_rec_loss_detail["next_rec_loss"] = next_rec_loss
         # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
         # loss_detail = {**rec_loss_detail}
         # loss_detail = {**loss_detail}
@@ -879,9 +905,9 @@ class InferenceCMI(Inference):
         masked_pred_losses = []
         with torch.no_grad():
             feature, feature_target = self.encoder(obs)
-            next_feature, next_feature_target = self.encoder(next_obses)
+            next_feature, next_feature_target, next_full_dist, next_masked_dists = self.encoder(next_obses)
             for i in range(feature_dim + 1):
-                mask = self.get_eval_mask(bs, i)                                         # (bs, feature_dim, feature_dim + 1)
+                mask = self.get_eval_mask(bs, i)                         # (bs, feature_dim, feature_dim + 1)
                 if i == 0:
                     # Transition loss
                     pred_next_dists, _ = self.forward_with_feature(feature, actions, mask)
@@ -898,18 +924,18 @@ class InferenceCMI(Inference):
                     # pred_loss: (bs, n_pred_step, feature_dim)
                     masked_pred_loss = self.prediction_loss_from_dist(pred_next_dist, next_feature,
                                                                       keep_variable_dim=True)
-                masked_pred_loss = masked_pred_loss.mean(dim=1)                         # (bs, feature_dim)
-                masked_pred_losses.append(masked_pred_loss)
+                masked_pred_loss = masked_pred_loss.mean(dim=1)             # (bs, feature_dim)
+                masked_pred_losses.append(masked_pred_loss)                 # [(bs, feature_dim)] * (feature_dim + 1)
 
             # A new axis is inserted at the end of the array to make the array compatible for broadcasting
-            full_pred_loss = full_pred_loss.mean(dim=1)[..., None]                      # (bs, feature_dim, 1)
-            eval_pred_loss = eval_pred_loss.sum(dim=(1, 2)).mean()                      # scalar
+            full_pred_loss = full_pred_loss.mean(dim=1)[..., None]          # (bs, feature_dim, 1)
+            eval_pred_loss = eval_pred_loss.sum(dim=(1, 2)).mean()          # scalar
             eval_details["eval_pred_loss"] = eval_pred_loss
             eval_details["eval_rec_loss"] = rec_loss
             eval_details["eval_next_rec_loss"] = next_rec_loss
 
         # bs * predicted_next_features * masked_current_features (without self-connection mask)
-        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)                    # (bs, feature_dim, feature_dim + 1)
+        masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)        # (bs, feature_dim, feature_dim + 1)
 
         # clean cache
         self.use_cache = False
@@ -920,9 +946,9 @@ class InferenceCMI(Inference):
         # full_pred_loss uses all state variables + action,
         # while along the last dim, masked_pred_losses drops either one state variable or the action
         # As the losses are negative log likelihood, the masked and full are swapped around in estimating CMI
-        CMI = masked_pred_losses - full_pred_loss                                       # (bs, feature_dim, feature_dim + 1)
+        CMI = masked_pred_losses - full_pred_loss                            # (bs, feature_dim, feature_dim + 1)
         # next_jth_feature * current_ith_feature (exclude self-connection, i.e., i != j)
-        CMI = CMI.mean(dim=0)                                                           # (feature_dim, feature_dim + 1)
+        CMI = CMI.mean(dim=0)                                                # (feature_dim, feature_dim + 1)
 
         self.eval_step_CMI += CMI
         self.mask_update_idx += 1

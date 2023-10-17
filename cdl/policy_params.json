@@ -92,10 +92,10 @@
             "dropout": 0
          },
           "feedforward_enc_params": {
-            "layer_num": 2,
-            "hidden_layer_size": 128,
+            "feature_fc_dims": [64, 64],
+            "generative_fc_dims": [64, 64],
             "dropout": 0,
-            "gumbel_temp_0": 3,
+            "gumbel_temp_0": 20,
             "gumbel_temp_decay_rate": 1
           }
     },

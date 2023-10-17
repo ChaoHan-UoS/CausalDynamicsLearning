@@ -9,7 +9,7 @@ from model.gumbel import gumbel_sigmoid
 
 
 def reset_layer(w, b=None):
-    # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+    # Setting a=sqrt(5) in kaiming_uniform is the same as initializing w with
     # uniform(-1/sqrt(in_features), 1/sqrt(in_features))
     # nn.init.kaiming_uniform_(w, a=np.sqrt(5))
     nn.init.kaiming_uniform_(w, nonlinearity='relu')
@@ -27,8 +27,8 @@ def reparameterize(mu, log_std):
 
 def forward_network(input, weights, biases, activation=F.relu, dropout=nn.Dropout(p=0)):
     """
-    given an input and a multi-layer networks (i.e., a list of weights and a list of biases),
-        apply the network to each input, and return output
+    given an input and a multi-layer networks (i.e., a layer-wise list of weights and a list of biases),
+        apply the network to the input, and return an output
     the same activation function is applied to all layers except for the last layer
     """
     x = input
@@ -36,7 +36,7 @@ def forward_network(input, weights, biases, activation=F.relu, dropout=nn.Dropou
         # x (p_bs, bs, in_dim), bs: data batch size which must be 1D
         # w (p_bs, in_dim, out_dim), p_bs: parameter batch size
         # b (p_bs, 1, out_dim)
-        x = torch.bmm(x, w) + b
+        x = torch.bmm(x, w) + b  # (p_bs, bs, out_dim)
         if i < len(weights) - 1 and activation:
             x = F.layer_norm(x, normalized_shape=(x.shape[-1],))
             x = activation(x)
@@ -54,7 +54,7 @@ def forward_network_batch(inputs, weights, biases, activation=F.relu, dropout=nn
         # x_i (p_bs, bs, in_dim), bs: data batch size which must be 1D
         # w (p_bs, in_dim, out_dim), p_bs: parameter batch size
         # b (p_bs, 1, out_dim)
-        x_i = torch.bmm(x_i, w) + b
+        x_i = torch.bmm(x_i, w) + b  # (p_bs, bs, out_dim)
         if activation:
             x_i = F.layer_norm(x_i, normalized_shape=(x_i.shape[-1],))
             x_i = activation(x_i)
