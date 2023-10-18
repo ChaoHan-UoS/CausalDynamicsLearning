@@ -766,7 +766,7 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def update(self, obs, actions, next_obses, rew, next_rews, hidden_label, eval=False):
+    def update(self, obs, actions, next_obses, rew, next_rews, hidden_label, eval_freq,  eval=False):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, n_pred_step, action_dim)  # not one-hot representation
@@ -779,7 +779,7 @@ class InferenceCMI(Inference):
         """
         self.update_num += 1
 
-        eval_freq = self.cmi_params.eval_freq
+        # eval_freq = self.cmi_params.eval_freq_0
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
         # forward_mode = ("full", "masked")
@@ -864,7 +864,7 @@ class InferenceCMI(Inference):
         masked_ll_loss_next_o2 *= 10
         loss = pred_loss + rec_loss + next_rec_loss
         # loss = pred_loss + rec_loss + next_rec_loss - full_ll_loss - masked_ll_loss_curr_o2 + masked_ll_loss_next_o2
-        # loss = pred_loss + rec_loss + next_rec_loss + cmi_loss
+        # loss = pred_loss
 
         # loss_detail["enc_CMI"] = CMI[0, 0]
         # loss_detail["enc_cmi_loss"] = cmi_loss
@@ -958,17 +958,23 @@ class InferenceCMI(Inference):
         if self.mask_update_idx == eval_steps:
             self.eval_step_CMI /= eval_steps
 
-            # eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
-            # eval_step_CMI *= self.CMI_threshold
+            '''
+            eval_step_CMI = torch.eye(feature_dim, feature_dim + 1, dtype=torch.float32, device=self.device)
+            eval_step_CMI *= self.CMI_threshold
 
             # (feature_dim, feature_dim), (feature_dim, feature_dim)
-            # upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
-            # eval_step_CMI[:, 1:] += upper_tri
-            # eval_step_CMI[:, :-1] += lower_tri
+            upper_tri, lower_tri = torch.triu(self.eval_step_CMI), torch.tril(self.eval_step_CMI, diagonal=-1)
+            eval_step_CMI[:, 1:] += upper_tri
+            eval_step_CMI[:, :-1] += lower_tri
+
+            self.mask_CMI = self.mask_CMI * eval_tau + eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
+            self.mask = self.mask_CMI >= self.CMI_threshold
+            self.mask[self.diag_mask] = True
+            '''
 
             self.mask_CMI = self.mask_CMI * eval_tau + self.eval_step_CMI * (1 - eval_tau)  # Exponential smoothing
             self.mask = self.mask_CMI >= self.CMI_threshold
-            # self.mask[self.diag_mask] = True
+            eval_details["obj2->hidden_obj1"] = self.mask_CMI[1, 2]
 
             # ensure each object has at least one parent
             mask_CMI_max, mask_CMI_max_ids = self.mask_CMI.max(dim=1)

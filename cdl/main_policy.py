@@ -97,6 +97,8 @@ def train(params):
     inference_params = params.inference_params
     policy_params = params.policy_params
     cmi_params = inference_params.cmi_params
+    encoder_params = params.encoder_params
+    feedforward_enc_params = encoder_params.feedforward_enc_params
 
     # init environment
     chemical_env_params = params.env_params.chemical_env_params
@@ -331,22 +333,23 @@ def train(params):
             encoder.train()
             decoder.train()
             inference.setup_annealing(step)
+            eval_freq = cmi_params.eval_freq_0 \
+                if (step + 1 - training_params.init_steps) <= cmi_params.eval_freq_0 else eval_freq
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch =\
                     sample_process(batch_data, params)
                 # actions_batch = act_encoder(actions_batch, env, params)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
-                                               next_rews_batch, hidden_label_batch)
+                                               next_rews_batch, hidden_label_batch, eval_freq)
+                loss_detail["eval_freq"] = torch.tensor(eval_freq)
+                loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 loss_details["inference"].append(loss_detail)
-            # print('Parameters in inference (train mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
 
             inference.eval()
             encoder.eval()
             decoder.eval()
-            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
+            if (step + 1 - training_params.init_steps) % eval_freq == 0:
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
@@ -360,6 +363,13 @@ def train(params):
                         loss_details["inference_eval"].append(eval_pred_loss)
                         print("mask_CMI", inference.mask_CMI)
                         print("mask", inference.mask)
+
+                        if eval_pred_loss["eval_pred_loss"] < 0.05:
+                            eval_freq = cmi_params.eval_freq_ss
+                            encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_ss
+                        else:
+                            eval_freq = cmi_params.eval_freq_0
+                            encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_0
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
@@ -368,14 +378,16 @@ def train(params):
                     loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
                                                    next_rews_batch, hidden_label_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
-            # print('Parameters in inference (eval mode)')
-            # for name, value in inference.named_parameters():
-            #     print(name, value)
 
             inference.scheduler.step()
+            '''
             if (step + 1 - training_params.init_steps) % 100 == 0:
-                encoder.gumbel_temp *= params.encoder_params.feedforward_enc_params.gumbel_temp_decay_rate
-                # print("gumbel_temperature", encoder.gumbel_temp)
+                encoder.gumbel_temp *= feedforward_enc_params.gumbel_temp_decay_rate
+                print("gumbel_temperature", encoder.gumbel_temp)
+            '''
+            if (step + 1 - training_params.init_steps) % 10000 == 0:
+                print("buffer_train_len", len(buffer_train))
+
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()
