@@ -45,11 +45,14 @@ graphs = {
     'chain8': '0->1->2->3->4->5->6->7',
     'chain9': '0->1->2->3->4->5->6->7->8',
     'chain10': '0->1->2->3->4->5->6->7->8->9',
+    'chaincollider10': '0->1->2->3->4->5->6->7->8->9, 0->2',
     'chain11': '0->1->2->3->4->5->6->7->8->9->10',
     'chain12': '0->1->2->3->4->5->6->7->8->9->10->11',
     'chain13': '0->1->2->3->4->5->6->7->8->9->10->11->12',
     'chain14': '0->1->2->3->4->5->6->7->8->9->10->11->12->13',
     'chain15': '0->1->2->3->4->5->6->7->8->9->10->11->12->13->14',
+    'chain30': '0->1->2->3->4->5->6->7->8->9->10->11->12->13->14->15->16->17->18->19->20->21->22->23->24->25->26->27->28->29',
+    'lowtri10': '0->{1-9}, 1->{2-9}, 2->{3-9}, 3->{4-9}, 4->{5-9}, 5->{6-9}, 6->{7-9}, 7->{8-9}, 8->9',
     'full3': '{0-2}->{0-2}',
     'full4': '{0-3}->{0-3}',
     'full5': '{0-4}->{0-4}',
@@ -367,8 +370,6 @@ class Chemical(gym.Env):
         self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
         self.adjacency_matrix += torch.eye(self.num_objects)
-        # self.adjacency_matrix[0, 0] = 1
-        # self.adjacency_matrix[1, 1] = 1
         print(self.adjacency_matrix)
         self.reset()
 
