@@ -771,15 +771,11 @@ class ForwardEncoder(nn.Module):
                 # (bs, action_dim)
                 actions = obs_act.squeeze(dim=1)
 
-            if mask_dset is None or (mask_dset == 0).all():
-                forward_mode = ("full",)
-                mask = None
-            else:
-                forward_mode = ("masked",)
-                # (bs, num_hidden_objects, feature_dim_dset + 1)
-                mask = torch.ones(bs, self.num_hidden_objects, self.feature_dim_dset + 1,
-                                  dtype=torch.bool, device=self.device)
-                mask[:] = mask_dset.bool()  # broadcast along bs
+            forward_mode = ("masked",)
+            # (bs, num_hidden_objects, feature_dim_dset + 1)
+            mask = torch.ones(bs, self.num_hidden_objects, self.feature_dim_dset + 1,
+                              dtype=torch.bool, device=self.device)
+            mask[:] = mask_dset.bool()  # broadcast along bs
 
             # enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
             enc_dist, enc_feature = self.forward_with_feature(features, actions, mask, forward_mode=forward_mode)

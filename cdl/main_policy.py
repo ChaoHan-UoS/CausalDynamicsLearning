@@ -122,16 +122,19 @@ def train(params):
     # init model
     update_obs_act_spec(env, params)
     encoder = obs_encoder(params)
-    # mask_dset = None
-    # mask_dset = torch.tensor([[0., 1., 0., 0., 0., 0., 0., 0., 0.,
-    #                            0., 1., 0., 0., 0., 0., 0., 0., 0.,
+    mask_dset = torch.ones(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
+    # mask_dset = torch.tensor([[0., 1., 0., 0., 0., 0., 0., 0.,
+    #                            0., 1., 0., 0., 0., 0., 0., 0.,
+    #                            1.],
+    #                           [0., 0., 1., 0., 0., 0., 0., 0.,
+    #                            0., 0., 1., 0., 0., 0., 0., 0.,
     #                            1.]])  # ["obj2"]
     # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
     # mask_dset = torch.ones(dset_full_dim)
 
-    mask_dset = torch.tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                               0., 0., 0., 0., 0., 0., 0., 0., 1.,
-                               1.]])
+    # mask_dset = torch.tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1.,
+    #                            0., 0., 0., 0., 0., 0., 0., 0., 1.,
+    #                            1.]])
 
     decoder = rew_decoder(params)
 
@@ -391,21 +394,25 @@ def train(params):
                     loss_details["inference_eval"].append(loss_detail)
 
             if (step + 1 - training_params.init_steps) % feedforward_enc_params.dset_eval_freq == 0:
-                mask_dset = torch.zeros(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
+                mask_dset[:, :-1] = 0
                 mask = inference.mask.detach().long()
                 mask_row_ids = [i for i in range(mask.size(0)) if i not in encoder.hidden_objects_ind]
                 mask_col_ids = [j for j in range(mask.size(1) - 1) if j not in encoder.hidden_objects_ind]
                 for h_idx, h in enumerate(encoder.hidden_objects_ind):
                     for i_idx, i in enumerate(mask_row_ids):
                         if mask[i, h] == 1:
-                            # mask_dset[h_idx, :encoder.num_dset_obs] = mask[i, mask_col_ids]
+                            if (step + 1 - training_params.init_steps) >= (5 * feedforward_enc_params.dset_eval_freq):
+                                mask_dset[h_idx, :encoder.num_dset_obs] += mask[i, mask_col_ids]
+                            else:
+                                mask_dset[h_idx, :encoder.num_dset_obs] = 1
                             # mask_dset[h_idx, i_idx] = 1
-                            mask_dset[h_idx, :encoder.num_dset_obs] = 1
-                            mask_dset[h_idx, encoder.num_dset_obs: (2 * encoder.num_dset_obs)] =\
+                            mask_dset[h_idx, encoder.num_dset_obs: (2 * encoder.num_dset_obs)] +=\
                                 F.one_hot(torch.tensor(i_idx), encoder.num_dset_obs)
                             # mask_dset[h_idx, -1] = mask[i, -1]
-                            mask_dset[h_idx, -1] = 1
-                            break
+                            # break
+                for h_idx, h in enumerate(encoder.hidden_objects_ind):
+                    if (mask_dset[h_idx, :encoder.num_dset_obs] == 0).all():
+                        mask_dset[h_idx, :encoder.num_dset_obs] = 1
                 print("mask_dset:", mask_dset)
 
 

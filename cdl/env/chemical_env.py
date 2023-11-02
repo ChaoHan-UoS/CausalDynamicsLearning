@@ -260,6 +260,59 @@ def random_dag(M, N, rng, g=None):
         return gammagt
 
 
+# class SCE(nn.Module):
+#     """Structural Causal Equations of Markovian transition implemented by MLPs"""
+#     def __init__(self, dims):
+#         super().__init__()
+#         self.layers = []
+#         for i in range(1, len(dims)):
+#             self.layers.append(nn.Linear(dims[i-1], dims[i]))
+#             torch.nn.init.orthogonal_(self.layers[-1].weight.data, 3.0)
+#             torch.nn.init.uniform_(self.layers[-1].bias.data, -0.2, +0.2)
+#         self.layers = nn.ModuleList(self.layers)
+#
+#     def forward(self, x, mask):
+#         x = x * mask
+#         for i, l in enumerate(self.layers):
+#             if i == len(self.layers) - 1:
+#                 x = torch.softmax(l(x), dim=1)
+#             else:
+#                 x = torch.relu(l(x))
+#         x = torch.distributions.one_hot_categorical.OneHotCategorical(probs=x).sample()
+#         return x
+#
+#     def forward(self, s, idx, mask):
+#         """
+#         :param s: current one-hot colors of all objects, [(num_colors)] * num_objects
+#         :param idx: current intervened object index, int
+#         :param mask: adjacency matrix
+#         :return: next one-hot colors of a object
+#         """
+#         s_0 = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
+#         a_0 = F.one_hot(torch.tensor(idx), len(s)).float()
+#         x_0 = torch.matmul(mask, s_0) + a_0
+#
+#         for i, l in enumerate(self.layers):
+#             if i == len(self.layers) - 1:
+#                 x_0 = torch.softmax(l(x_0), dim=1)
+#             else:
+#                 x_0 = torch.relu(l(x_0))
+#         x_1 = torch.distributions.one_hot_categorical.OneHotCategorical(probs=x_0).sample()
+#         return x_1
+#
+#
+#     def sce(self, s, idx):
+#         s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
+#         a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
+#
+#         s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
+#         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
+#         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
+#
+#         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
+#         return s_t1
+
+
 @dataclass
 class Object:
     pos: Coord
@@ -334,6 +387,9 @@ class Chemical(gym.Env):
         self.actions_to_target = []
 
         self.objects = OrderedDict()
+
+        # mlp_dims = [self.num_objects * self.num_colors, 4 * self.num_objects, self.num_colors]
+        # self.sce = [SCE(mlp_dims).to(device) for _ in range(self.num_objects)]
 
         self.reset()
 

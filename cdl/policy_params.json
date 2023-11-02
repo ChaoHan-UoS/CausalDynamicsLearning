@@ -35,8 +35,8 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [9],
-            "keys_dset_0": ["obj0", "obj1", "obj2", "obj3", "obj4", "obj5", "obj6", "obj7", "obj8"],
+            "hidden_objects_ind": [1, 3],
+            "keys_dset_0": ["obj0", "obj2", "obj4", "obj5", "obj6", "obj7", "obj8", "obj9"],
             "hidden_targets_ind": [],
             "num_objects": 10,
             "num_colors": 3,
@@ -52,7 +52,7 @@
             "use_cuda": false,
             "max_steps": 10,
             "num_target_interventions": 3,
-            "g": "lowtri10",
+            "g": "chain10",
             "match_type": "all",
             "dense_reward": true
         }
@@ -98,7 +98,7 @@
             "gumbel_temp_0": 50,
             "gumbel_temp_ss": 5,
             "gumbel_temp_decay_rate": 1,
-            "dset_eval_freq": 1000000
+            "dset_eval_freq": 10000
           }
     },
     "decoder_params": {
