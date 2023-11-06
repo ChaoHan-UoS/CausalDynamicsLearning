@@ -122,13 +122,22 @@ def train(params):
     # init model
     update_obs_act_spec(env, params)
     encoder = obs_encoder(params)
-    mask_dset = torch.ones(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
+    # mask_dset = torch.ones(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
+    mask_dset = torch.tensor([0., 1., 0., 0.,
+                              0., 1., 0., 0.,
+                              1.])  # ["obj2"]
+    # mask_dset = torch.tensor([1., 1., 1., 1.,
+    #                           1., 1., 1., 1.,
+    #                           1.])  # ["obj2"]
     # mask_dset = torch.tensor([[0., 1., 0., 0., 0., 0., 0., 0.,
     #                            0., 1., 0., 0., 0., 0., 0., 0.,
     #                            1.],
     #                           [0., 0., 1., 0., 0., 0., 0., 0.,
     #                            0., 0., 1., 0., 0., 0., 0., 0.,
-    #                            1.]])  # ["obj2"]
+    #                            1.]])  # ["obj2", "obj4"]
+    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
+    #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
+    #                           1.])  # ["obj2"]
     # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
     # mask_dset = torch.ones(dset_full_dim)
 

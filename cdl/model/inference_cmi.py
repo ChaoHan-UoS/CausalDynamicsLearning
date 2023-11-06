@@ -884,6 +884,7 @@ class InferenceCMI(Inference):
                 masked_pred_loss = masked_pred_loss.mean(dim=1)             # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)                 # [(bs, feature_dim)] * (feature_dim + 1)
 
+
             # 1 hidden object
             # (bs, )
             next_hidden = [next_hidden[key] for key in self.params.hidden_keys][0].squeeze(dim=1)
