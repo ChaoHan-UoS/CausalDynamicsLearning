@@ -10,8 +10,9 @@ from model.inference_utils import reset_layer
 
 
 class FeedforwardDecoder(nn.Module):
-    def __init__(self, params, input_dim, output_dim, hidden_dim, dropout):
+    def __init__(self, params, input_dim, output_dim, hidden_dim, dropout, categorical_rew):
         super().__init__()
+        self.categorical_rew = categorical_rew
         self.feedforward = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -64,7 +65,8 @@ def rew_decoder(params):
         device = params.device
         hidden_layer_size = feedforward_dec_params.hidden_layer_size
         dropout = feedforward_dec_params.dropout
-        decoder = FeedforwardDecoder(params, obs_shape, logit_shape, hidden_layer_size, dropout).to(device)
+        categorical_rew = feedforward_dec_params.categorical_rew
+        decoder = FeedforwardDecoder(params, obs_shape, logit_shape, hidden_layer_size, dropout, categorical_rew).to(device)
     else:
         raise ValueError("Unknown decoder_type: {}".format(decoder_type))
     return decoder

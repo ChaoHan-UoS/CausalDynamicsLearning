@@ -802,7 +802,6 @@ class ForwardEncoder(nn.Module):
                                + obs_obs_forward[self.hidden_objects_ind[1] - 1:])
             # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
             enc_obs_obj, enc_obs_target = enc_obs[: self.num_objects], enc_obs[self.num_objects:]
-
             return enc_obs_obj, enc_obs_target
 
 

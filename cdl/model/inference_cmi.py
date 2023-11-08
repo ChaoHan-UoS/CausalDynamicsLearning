@@ -681,6 +681,7 @@ class InferenceCMI(Inference):
         pred_losses = [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
                        for pred_next_dist_i in pred_next_dist]  # [(bs, n_pred_step)] * 3
 
+        '''
         if len(pred_losses) == 2:
             pred_losses.append(None)
         assert len(pred_losses) == 3
@@ -698,6 +699,20 @@ class InferenceCMI(Inference):
             causal_pred_loss = causal_pred_loss.sum(dim=-1).mean()
             pred_loss += causal_pred_loss
             pred_loss_detail["causal_pred_loss"] = causal_pred_loss
+        '''
+
+        full_pred_loss, causal_pred_loss = pred_losses
+
+        full_pred_loss = full_pred_loss.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
+
+        pred_loss = full_pred_loss
+
+        pred_loss_detail = {"full_pred_loss": full_pred_loss}
+
+        if causal_pred_loss is not None:
+            causal_pred_loss = causal_pred_loss.sum(dim=-1).mean()
+            pred_loss += causal_pred_loss
+            pred_loss_detail["causal_pred_loss"] = causal_pred_loss
 
         return pred_loss, pred_loss_detail
 
@@ -709,27 +724,24 @@ class InferenceCMI(Inference):
         :return rec_loss: scalar tensor
                 rec_loss_detail: {"loss_name": loss_value}
         """
-        if rew is None:
-            return 0, {}
-
-        # (bs, (n_pred_step))
-        rew_unnorm = (rew * self.feature_dim).squeeze(dim=-1).long()
-
         # (bs, (n_pred_step), reward_dim)
         rew_feature = self.decoder(feature)
-        # (bs, reward_dim, (n_pred_step))
-        rew_feature = rew_feature.permute(0, 2, 1) if len(rew_feature.shape) == 3 else rew_feature
 
-        if not self.training:
-            # accuracy as the reconstruction loss
-            _, rew_feature_ids = rew_feature.max(dim=1)  # (bs, (n_pred_step))
-            rec_loss = (rew_feature_ids == rew_unnorm).sum() / np.prod(rew_feature_ids.shape)
+        if self.decoder.categorical_rew:
+            # (bs, (n_pred_step))
+            rew_unnorm = (rew * self.feature_dim).squeeze(dim=-1).long()
+            # (bs, reward_dim, (n_pred_step))
+            rew_feature = rew_feature.permute(0, 2, 1) if len(rew_feature.shape) == 3 else rew_feature
+            if not self.training:
+                # accuracy as the reconstruction loss
+                _, rew_feature_ids = rew_feature.max(dim=1)  # (bs, (n_pred_step))
+                rec_loss = (rew_feature_ids == rew_unnorm).sum() / np.prod(rew_feature_ids.shape)
+            else:
+                rec_loss = self.loss_ce(rew_feature, rew_unnorm)  # (bs, (n_pred_step))
         else:
-            rec_loss = self.loss_ce(rew_feature, rew_unnorm)  # (bs, (n_pred_step))
-
-        # rec_loss = rec_loss[rew == 1].unsqueeze(-1)
-        # rec_loss *= (rew == 1)
-        # rec_loss *= rew
+            # L1/L2 reward prediction loss
+            rec_loss = self.loss_l1(rew_feature, rew)  # (bs, (n_pred_step), 1)
+            rec_loss = rec_loss.squeeze(-1)
 
         if len(rec_loss.shape) == 2:
             rec_loss = rec_loss.sum(dim=-1).mean()  # sum over n_pred_step and reward_dim then average over bs
@@ -780,8 +792,8 @@ class InferenceCMI(Inference):
 
         eval_freq = self.cmi_params.eval_freq
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
-        forward_mode = ("full", "masked", "causal")
-        # forward_mode = ("full", "masked")
+        # forward_mode = ("full", "masked", "causal")
+        forward_mode = ("full", "causal")
         bs = actions.size(0)
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
@@ -800,7 +812,6 @@ class InferenceCMI(Inference):
         # only consider full and masked distributions when updating causal mask
         if not self.update_num % (eval_freq * inference_gradient_steps):
             pred_next_dist = pred_next_dist[:2]
-
 
         # Transition loss for positive features
         pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
@@ -822,9 +833,9 @@ class InferenceCMI(Inference):
         # loss = pred_loss + pred_loss_neg + 20 * (rec_loss + next_rec_loss + rec_pred_loss)
         rec_loss *= 10
         next_rec_loss *= 10
-        loss = pred_loss + rec_loss + next_rec_loss
+        # loss = pred_loss + rec_loss + next_rec_loss
         # loss = pred_loss + rec_loss + next_rec_loss - full_ll_loss - masked_ll_loss_curr_o2 + masked_ll_loss_next_o2
-        # loss = pred_loss
+        loss = pred_loss
 
         rec_loss_detail["rec_loss"] = rec_loss
         next_rec_loss_detail["next_rec_loss"] = next_rec_loss
@@ -884,29 +895,52 @@ class InferenceCMI(Inference):
                 masked_pred_loss = masked_pred_loss.mean(dim=1)             # (bs, feature_dim)
                 masked_pred_losses.append(masked_pred_loss)                 # [(bs, feature_dim)] * (feature_dim + 1)
 
+            if len(self.params.hidden_keys) == 0:
+                hidden_objects_ind = 1
+                # (bs, num_colors)
+                next_feature_hidden = next_feature[hidden_objects_ind].squeeze(dim=1)
+                # (bs, )
+                next_feature_hidden = torch.argmax(next_feature_hidden, dim=1)
 
-            # 1 hidden object
-            # (bs, )
-            next_hidden = [next_hidden[key] for key in self.params.hidden_keys][0].squeeze(dim=1)
+                # (bs, num_colors)
+                pred_next_feature_hidden = pred_next_features[0][hidden_objects_ind].squeeze(dim=1)
+                # (bs, )
+                pred_next_feature_hidden = torch.argmax(pred_next_feature_hidden, dim=1)
 
-            # (bs, num_colors)
-            next_feature_hidden = [next_feature[i] for i in self.encoder.hidden_objects_ind][0].squeeze(dim=1)
-            # (bs, )
-            next_feature_hidden = torch.argmax(next_feature_hidden, dim=1)
+                # Hidden prediction accuracy
+                next_pred_hidden_acc = (pred_next_feature_hidden == next_feature_hidden).sum() / bs
 
-            # [(bs, n_pred_step, num_colors)] * num_hidden_objects
-            pred_next_feature_hiddens = [pred_next_features[0][i] for i in self.encoder.hidden_objects_ind]
-            # (bs, num_colors)
-            pred_next_feature_hidden = pred_next_feature_hiddens[0].squeeze(dim=1)
-            # (bs, )
-            pred_next_feature_hidden = torch.argmax(pred_next_feature_hidden, dim=1)
+                print("next_true_hidden", next_feature_hidden[:20])
+                print("next_pred_hidden", pred_next_feature_hidden[:20])
+                eval_details["next_pred_hidden_acc"] = next_pred_hidden_acc
+            else:
+                # 1 hidden object
+                # (bs, )
+                next_hidden = [next_hidden[key].long() for key in self.params.hidden_keys][0].squeeze(dim=1)
 
-            # Hidden prediction accuracy
-            next_enc_hidden_acc = (next_feature_hidden == next_hidden).sum() / bs
-            next_pred_hidden_acc = (pred_next_feature_hidden == next_hidden).sum() / bs
-            print("next_hidden", next_hidden[:10])
-            print("next_enc_hidden", next_feature_hidden[:10])
-            print("next_pred_hidden", pred_next_feature_hidden[:10])
+                # (bs, num_colors)
+                next_feature_hidden = [next_feature[i] for i in self.encoder.hidden_objects_ind][0].squeeze(dim=1)
+                # (bs, )
+                next_feature_hidden = torch.argmax(next_feature_hidden, dim=1)
+
+                # [(bs, n_pred_step, num_colors)] * num_hidden_objects
+                pred_next_feature_hiddens = [pred_next_features[0][i] for i in self.encoder.hidden_objects_ind]
+                # (bs, num_colors)
+                pred_next_feature_hidden = pred_next_feature_hiddens[0].squeeze(dim=1)
+                # (bs, )
+                pred_next_feature_hidden = torch.argmax(pred_next_feature_hidden, dim=1)
+
+                # Hidden prediction accuracy
+                next_enc_hidden_acc = (next_feature_hidden == next_hidden).sum() / bs
+                next_pred_hidden_acc = (pred_next_feature_hidden == next_hidden).sum() / bs
+                next_pred_enco_hidden_acc = (pred_next_feature_hidden == next_feature_hidden).sum() / bs
+
+                print("next_true_hidden", next_hidden[:20])
+                print("next_enco_hidden", next_feature_hidden[:20])
+                print("next_pred_hidden", pred_next_feature_hidden[:20])
+                eval_details["next_enc_hidden_acc"] = next_enc_hidden_acc
+                eval_details["next_pred_hidden_acc"] = next_pred_hidden_acc
+                eval_details["next_pred_enco_hidden_acc"] = next_pred_enco_hidden_acc
 
             # A new axis is inserted at the end of the array to make the array compatible for broadcasting
             full_pred_loss = full_pred_loss.mean(dim=1)[..., None]          # (bs, feature_dim, 1)
@@ -914,8 +948,6 @@ class InferenceCMI(Inference):
             eval_details["eval_pred_loss"] = eval_pred_loss
             eval_details["eval_rec_loss"] = rec_loss
             eval_details["eval_next_rec_loss"] = next_rec_loss
-            eval_details["next_enc_hidden_acc"] = next_enc_hidden_acc
-            eval_details["next_pred_hidden_acc"] = next_pred_hidden_acc
 
         # bs * predicted_next_features * masked_current_features (without self-connection mask)
         masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)        # (bs, feature_dim, feature_dim + 1)
