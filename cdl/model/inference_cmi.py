@@ -201,7 +201,7 @@ class InferenceCMI(Inference):
         state_feature = state_feature.view(feature_dim, feature_dim, bs, -1)
         return state_feature                                                # (feature_dim, feature_dim, bs, out_dim)
 
-    def extract_masked_state_feature(self, masked_feature, full_state_feature=None):
+    def extract_masked_state_feature(self, masked_feature, full_state_feature):
         """
         :param masked_feature:
             if state space is continuous: (bs, feature_dim).
@@ -213,7 +213,6 @@ class InferenceCMI(Inference):
             inputs (all current state variables) for the prediction
         """
         feature_dim = self.feature_dim
-
         if self.continuous_state:
             x = masked_feature.transpose(0, 1)                              # (feature_dim, bs)
             x = x.unsqueeze(dim=-1)                                         # (feature_dim, bs, 1)
@@ -234,8 +233,8 @@ class InferenceCMI(Inference):
 
         feature_diag_mask = self.feature_diag_mask                          # (feature_dim, feature_dim, 1, 1)
         masked_state_feature = x.unsqueeze(dim=0)                           # (1, feature_dim, bs, out_dim)
-        # masked_state_feature = full_state_feature * (1 - feature_diag_mask) + masked_state_feature * feature_diag_mask
-        masked_state_feature = masked_state_feature.repeat(feature_dim, 1, 1, 1)
+        masked_state_feature = full_state_feature * (1 - feature_diag_mask) + masked_state_feature * feature_diag_mask
+        # masked_state_feature = masked_state_feature.repeat(feature_dim, 1, 1, 1)
         return masked_state_feature                                         # (feature_dim, feature_dim, bs, out_dim)
 
     def predict_from_sa_feature(self, sa_feature, residual_base=None, abstraction_mode=False):
@@ -337,7 +336,8 @@ class InferenceCMI(Inference):
         if forward_masked:
             # 1. extract features of all state variables
             # (feature_dim, feature_dim, bs, out_dim)
-            masked_state_feature = self.extract_masked_state_feature(masked_feature, full_state_feature)
+            # masked_state_feature = self.extract_masked_state_feature(masked_feature, full_state_feature)
+            masked_state_feature = self.extract_state_feature(masked_feature)
 
             # 2. extract global feature by element-wise max
             # mask out unused features
@@ -663,8 +663,6 @@ class InferenceCMI(Inference):
         bool_mask = int_mask < 1
         return ~bool_mask
 
-        return self.get_mask_by_id(idxes)  # (bs, feature_dim, feature_dim + 1)
-
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
         """
         calculate total prediction loss for full, masked and/or causal prediction distributions
@@ -804,7 +802,7 @@ class InferenceCMI(Inference):
         forward_mode = ("full", "masked", "causal")
         # forward_mode = ("full", "causal")
         bs = actions.size(0)
-        # mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
+        mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
         # feature/feature_target: [(bs, num_colors)] * num_objects
         feature, feature_target = self.encoder(obs, mask_dset)
@@ -904,7 +902,7 @@ class InferenceCMI(Inference):
         feature_dim = self.feature_dim
 
         # set up cache for faster computation
-        self.use_cache = True
+        self.use_cache = False
         self.sa_feature_cache = None
 
         eval_details = {}

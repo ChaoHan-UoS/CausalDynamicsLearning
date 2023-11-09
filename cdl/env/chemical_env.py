@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import re
+import copy
 
 import gym
 from collections import OrderedDict
@@ -349,7 +350,7 @@ class Chemical(gym.Env):
                                  if i not in chemical_env_params.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
 
-        mlp_dims = [self.num_objects * self.num_colors + 1, 4 * self.num_objects, self.num_colors]
+        mlp_dims = [self.num_objects * (self.num_colors + 1), 4 * self.num_objects, self.num_colors]
         self.mlps = [MLP(mlp_dims).to(device) for _ in range(self.num_objects)]
 
         self.set_graph(chemical_env_params.g)
@@ -529,38 +530,35 @@ class Chemical(gym.Env):
         mask_obs = self.adjacency_matrix.unsqueeze(-1)
         mask_obs = mask_obs.repeat(1, 1, self.num_colors)
         mask_obs = mask_obs.view(self.adjacency_matrix.size(0), -1)  # (num_objects, num_objects * num_colors)
-        mask_act = torch.ones(self.num_objects, 1)  # (num_objects, 1)
-        self.mask = torch.cat((mask_obs, mask_act), dim=1)  # (num_objects, num_objects * num_colors + 1)
+        mask_act = torch.ones(self.num_objects, self.num_objects)  # (num_objects, num_objects)
+        self.mask = torch.cat((mask_obs, mask_act), dim=1)  # (num_objects, num_objects * (num_colors + 1))
 
     def sample_variables_target(self, idx):
         obs_inp = torch.cat(self.object_to_color_target, dim=0)
         act_inp = F.one_hot(torch.tensor(idx), self.num_objects).float()
-
+        # (1, num_objects * (num_colors + 1))
+        inp = torch.cat((obs_inp, act_inp), dim=0).unsqueeze(0)
         for v in range(self.num_objects):
-            # (1, num_objects * num_colors + 1)
-            inp = torch.cat((obs_inp, act_inp[v].unsqueeze(0)), dim=0).unsqueeze(0)
             mask = self.mask[v].unsqueeze(0)
-
             out = self.mlps[v](inp, mask)
             self.object_to_color_target[v] = out.squeeze(0)
 
     def sample_variables(self, idx):
         obs_inp = torch.cat(self.object_to_color, dim=0)
         act_inp = F.one_hot(torch.tensor(idx), self.num_objects).float()
-
+        # (1, num_objects * (num_colors + 1))
+        inp = torch.cat((obs_inp, act_inp), dim=0).unsqueeze(0)
         for v in range(self.num_objects):
-            # (1, num_objects * num_colors + 1)
-            inp = torch.cat((obs_inp, act_inp[v].unsqueeze(0)), dim=0).unsqueeze(0)
             mask = self.mask[v].unsqueeze(0)
-
             out = self.mlps[v](inp, mask)
             self.object_to_color[v] = out.squeeze(0)
 
     def generate_target(self, num_steps=3):
         self.actions_to_target = []
+        # temp = copy.deepcopy(self.object_to_color_target)
         for i in range(num_steps):
             intervention_id = self.np_random.choice(self.partial_act_dims)
-            self.actions_to_target.append(intervention_id)
+            # self.actions_to_target.append(intervention_id)
             ########################################################
             # print(f"ACTIONS_TO_TARGET AT STEP {i}")
             # print(self.actions_to_target[-1])
@@ -571,6 +569,7 @@ class Chemical(gym.Env):
             # print(f"OBJECT_TO_COLOR_TARGET AT STEP {i}")
             # print(self.object_to_color_target, '\n')
             ########################################################
+            # self.object_to_color_target = copy.deepcopy(temp)
 
     def reset(self, seed=None, options=None):
         # Seed self.np_random
