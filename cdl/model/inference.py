@@ -21,9 +21,6 @@ class Inference(nn.Module):
     def __init__(self, encoder, decoder, params):
         super(Inference, self).__init__()
 
-        self.encoder = encoder
-        self.decoder = decoder
-
         self.params = params
         self.device = device = params.device
         self.inference_params = inference_params = params.inference_params
@@ -34,7 +31,7 @@ class Inference(nn.Module):
         self.continuous_state = params.continuous_state
         self.continuous_action = params.continuous_action
 
-        self.init_model()
+        self.init_model(encoder)
         self.reset_params()
 
         self.abstraction_quested = False
@@ -43,15 +40,25 @@ class Inference(nn.Module):
         self.loss_mse = nn.MSELoss(reduction='none')
         self.loss_ce = nn.CrossEntropyLoss(reduction='none')
         self.to(device)
-        self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr)
-        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
-                                             gamma=inference_params.lr_scheduler_gamma, verbose=False)
+
+        self.parameters_transition = list(self.parameters())
+        self.optimizer_transition = optim.Adam(self.parameters_transition, lr=inference_params.lr)
+        # self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
+        #                                      gamma=inference_params.lr_scheduler_gamma, verbose=False)
         self.dropout = nn.Dropout(p=inference_params.dropout)
+
+        self.encoder = encoder
+        self.decoder = decoder
+        self.parameters_encoder = list(self.encoder.parameters())
+        self.parameters_decoder = list(self.decoder.parameters())
+        self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=inference_params.lr)
+        # self.optimizer_enc_decoder = optim.Adam(
+        #     self.parameters_encoder + self.parameters_decoder, lr=inference_params.lr)
 
         self.load(params.training_params.load_inference, device)
         self.train()
 
-    def init_model(self):
+    def init_model(self, encoder):
         raise NotImplementedError
 
     def reset_params(self):

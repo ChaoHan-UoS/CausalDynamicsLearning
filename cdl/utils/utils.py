@@ -176,10 +176,6 @@ def update_obs_act_spec(env, params):
         params.obs_dims, params.obs_dims_f = obs_dims, obs_dims_f = env.observation_dims()
         params.action_spec = None
 
-    # print(params.action_dim)
-    # print(params.obs_spec)
-    # sys.exit()
-
 
 def get_single_env(params, render=False):
     env_params = params.env_params

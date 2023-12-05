@@ -34,7 +34,7 @@ class InferenceCMI(Inference):
         #     print(name, value.shape)
         # sys.exit()
 
-    def init_model(self):
+    def init_model(self, encoder):
         params = self.params
         cmi_params = self.cmi_params
 
@@ -44,9 +44,9 @@ class InferenceCMI(Inference):
         self.action_dim = action_dim = params.action_dim
         # self.num_objects = params.env_params.chemical_env_params.num_objects
         # self.action_dim = action_dim = self.num_objects  # encoder maps to the full action dim
-        self.feature_dim = feature_dim = self.encoder.feature_dim
+        self.feature_dim = feature_dim = encoder.feature_dim
         if not self.continuous_state:
-            self.feature_inner_dim = self.encoder.feature_inner_dim
+            self.feature_inner_dim = encoder.feature_inner_dim
 
         self.action_feature_weights = nn.ParameterList()  # [(feature_dim * 1, in_dim_i, out_dim_i)] * len(feature_fc_dims)
         self.action_feature_biases = nn.ParameterList()  # [(feature_dim * 1, 1, out_dim_i)] * len(feature_fc_dims)
@@ -785,6 +785,30 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
+    def backprop(self, loss, loss_detail):
+        transition_train_steps = self.inference_params.transition_train_steps
+        encoder_train_steps = self.params.encoder_params.encoder_train_steps
+        train_steps = encoder_train_steps + transition_train_steps
+
+        if self.update_num % train_steps < encoder_train_steps:
+            optimizer = self.optimizer_encoder
+            parameters = self.parameters_encoder
+        else:
+            optimizer = self.optimizer_transition
+            parameters = self.parameters_transition
+
+        self.optimizer_transition.zero_grad()
+        self.optimizer_encoder.zero_grad()
+        loss.backward()
+
+        grad_clip_norm = self.inference_params.grad_clip_norm
+        if not grad_clip_norm:
+            grad_clip_norm = np.inf
+        loss_detail["grad_norm"] = torch.nn.utils.clip_grad_norm_(parameters, grad_clip_norm)
+
+        optimizer.step()
+        return loss_detail
+
     def update(self, obs, actions, next_obses, rew, next_rews, mask_dset, eval=False):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
@@ -1175,7 +1199,8 @@ class InferenceCMI(Inference):
 
     def save(self, path):
         torch.save({"model": self.state_dict(),
-                    "optimizer": self.optimizer.state_dict(),
+                    "optimizer_encoder": self.optimizer_encoder.state_dict(),
+                    "optimizer_transition": self.optimizer_transition.state_dict(),
                     "mask_CMI": self.mask_CMI,
                     }, path)
 

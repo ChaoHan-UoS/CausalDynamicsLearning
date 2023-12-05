@@ -23,7 +23,7 @@ from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
-from model.encoder import obs_encoder, act_encoder
+from model.encoder import obs_encoder
 from model.decoder import rew_decoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
@@ -123,6 +123,9 @@ def train(params):
     update_obs_act_spec(env, params)
     encoder = obs_encoder(params)
     # mask_dset = torch.ones(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
+    # mask_dset = torch.tensor([0., 1.,
+    #                           0., 1.,
+    #                           1.])  # ["obj2"]
     mask_dset = torch.tensor([0., 1., 0., 0.,
                               0., 1., 0., 0.,
                               1.])  # ["obj2"]
@@ -360,7 +363,6 @@ def train(params):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch =\
                     sample_process(batch_data, params)
-                # actions_batch = act_encoder(actions_batch, env, params)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
                                                rew_batch, next_rews_batch, mask_dset)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
@@ -379,7 +381,6 @@ def train(params):
                         batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                         obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
                             sample_process(batch_data, params)
-                        # actions_batch = act_encoder(actions_batch, env, params)
                         eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch,
                                                                rew_batch, next_rews_batch, eval_tau, mask_dset,
                                                                next_hidden_batch)
@@ -397,7 +398,6 @@ def train(params):
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
                         sample_process(batch_data, params)
-                    # actions_batch = act_encoder(actions_batch, env, params)
                     loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
                                                    next_rews_batch, mask_dset, eval=True)
                     loss_details["inference_eval"].append(loss_detail)

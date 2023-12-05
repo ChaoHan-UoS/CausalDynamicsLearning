@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [],
+            "hidden_objects_ind": [1],
             "keys_dset_0": ["obj0", "obj2", "obj3", "obj4"],
             "hidden_targets_ind": [],
             "num_objects": 5,
@@ -85,6 +85,7 @@
         }
     },
     "encoder_params": {
+        "encoder_train_steps": 50,
         "encoder_type": "feedforward",
          "recurrent_enc_params": {
             "layer_num": 2,
@@ -110,6 +111,7 @@
          }
     },
     "inference_params": {
+        "transition_train_steps": 450,
         "n_pred_step": 1,
         "batch_size": 128,
         "lr": 1e-4,
@@ -128,7 +130,7 @@
             "pred_diff_reward_weight": 1.0,
             "eval_tau_0": 0.999,
             "eval_tau_ss": 0.9,
-            "eval_freq": 100,
+            "eval_freq": 200,
             "eval_steps": 1,
             "eval_batch_size": 64,
             "CMI_threshold": 0.03,

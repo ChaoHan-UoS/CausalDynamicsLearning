@@ -346,9 +346,7 @@ class Chemical(gym.Env):
             self.match_type = list(range(self.num_objects))
 
         self.partial_obs_keys = params.obs_keys
-        self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)
-                                 if i not in chemical_env_params.hidden_objects_ind]
-        self.action_dim = len(self.partial_act_dims)
+        self.action_dim = chemical_env_params.num_objects
 
         mlp_dims = [self.num_objects * (self.num_colors + 1), 4 * self.num_objects, self.num_colors]
         self.mlps = [MLP(mlp_dims).to(device) for _ in range(self.num_objects)]
@@ -366,22 +364,6 @@ class Chemical(gym.Env):
         self.objects = OrderedDict()
 
         self.reset()
-
-    # def sce(self, s, idx):
-    #     """structural causal equations of environment causal transition
-    #     x: current one-hot colors of all objects; shape [(num_colors)] * num_objects
-    #     r: current intervened object index; int
-    #     return: next one-hot color of the all objects
-    #     """
-    #     s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
-    #     a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
-    #
-    #     s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
-    #     # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
-    #     # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
-    #
-    #     s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
-    #     return s_t1
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -557,7 +539,7 @@ class Chemical(gym.Env):
         self.actions_to_target = []
         # temp = copy.deepcopy(self.object_to_color_target)
         for i in range(num_steps):
-            intervention_id = self.np_random.choice(self.partial_act_dims)
+            intervention_id = self.np_random.choice(self.action_dim)
             # self.actions_to_target.append(intervention_id)
             ########################################################
             # print(f"ACTIONS_TO_TARGET AT STEP {i}")
@@ -646,15 +628,13 @@ class Chemical(gym.Env):
 
         return True
 
-    def translate(self, obj_id):
-        self.sample_variables(obj_id)
+    def translate(self, act):
+        self.sample_variables(act)
         for idx, obj in self.objects.items():
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
     def step(self, action: int):
-        partial_action = self.partial_act_dims[action]
-        obj_id = partial_action
-        self.translate(obj_id)
+        self.translate(action)
 
         if self.continuous_pos:
             for _, obj in self.objects.items():
