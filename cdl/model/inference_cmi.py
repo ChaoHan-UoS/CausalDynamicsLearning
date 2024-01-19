@@ -287,7 +287,8 @@ class InferenceCMI(Inference):
                     mu, log_std = torch.split(dist_i, 1, dim=-1)            # (bs, 1), (bs, 1)
                     dist.append(self.normal_helper(mu, base_i, log_std))
                 else:
-                    dist.append(OneHotCategorical(logits=dist_i))
+                    # dist.append(OneHotCategorical(logits=dist_i))
+                    dist.append(dist_i)
             return dist
 
     def forward_step(self, full_feature, masked_feature, causal_feature, action, mask=None,
@@ -785,20 +786,31 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def backprop(self, loss, loss_detail):
+    def backprop(self, pred_loss, rec_losses, loss_detail):
+        pre_train_steps = self.inference_params.pre_train_steps
         transition_train_steps = self.inference_params.transition_train_steps
         encoder_train_steps = self.params.encoder_params.encoder_train_steps
         train_steps = encoder_train_steps + transition_train_steps
 
-        if self.update_num % train_steps < encoder_train_steps:
-            optimizer = self.optimizer_encoder
-            parameters = self.parameters_encoder
+        if self.update_num <= pre_train_steps:
+            loss = rec_losses
+            optimizer = self.optimizer_enc_decoder
+            parameters = self.parameters_encoder + self.parameters_decoder
         else:
-            optimizer = self.optimizer_transition
-            parameters = self.parameters_transition
+            loss = pred_loss + rec_losses
+            if (self.update_num - pre_train_steps) % train_steps < transition_train_steps:
+                optimizer = self.optimizer_transition
+                parameters = self.parameters_transition
+            else:
+                optimizer = self.optimizer_enc_decoder
+                parameters = self.parameters_encoder + self.parameters_decoder
+            # optimizer = self.optimizer
+            # parameters = self.parameters()
 
         self.optimizer_transition.zero_grad()
-        self.optimizer_encoder.zero_grad()
+        # self.optimizer_encoder.zero_grad()
+        self.optimizer_enc_decoder.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
 
         grad_clip_norm = self.inference_params.grad_clip_norm
@@ -808,6 +820,18 @@ class InferenceCMI(Inference):
 
         optimizer.step()
         return loss_detail
+
+    # def backprop(self, loss, loss_detail):
+    #     self.optimizer.zero_grad()
+    #     loss.backward()
+    #
+    #     grad_clip_norm = self.inference_params.grad_clip_norm
+    #     if not grad_clip_norm:
+    #         grad_clip_norm = np.inf
+    #     loss_detail["grad_norm"] = torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip_norm)
+    #
+    #     self.optimizer.step()
+    #     return loss_detail
 
     def update(self, obs, actions, next_obses, rew, next_rews, mask_dset, eval=False):
         """
@@ -842,7 +866,7 @@ class InferenceCMI(Inference):
 
         masked_pred_losses = []
         for i in range(self.feature_dim + 1):
-            mask = self.get_eval_mask_(bs, i)  # (bs, feature_dim, feature_dim + 1)
+            mask = self.get_eval_mask(bs, i)  # (bs, feature_dim, feature_dim + 1)
             if i == 0:
                 # Transition loss
                 pred_next_dists, pred_next_features = self.forward_with_feature(feature, actions, mask)
@@ -862,7 +886,8 @@ class InferenceCMI(Inference):
         masked_pred_losses = torch.stack(masked_pred_losses, dim=-1)        # (bs, n_pred_step, feature_dim + 1)
         masked_pred_losses = masked_pred_losses.sum(dim=(-2, -1)).mean()
 
-        pred_loss = full_pred_loss + causal_pred_loss + masked_pred_losses
+        # pred_loss = full_pred_loss + causal_pred_loss + masked_pred_losses
+        pred_loss = full_pred_loss + masked_pred_losses
 
         loss_detail = {"full_pred_loss": full_pred_loss,
                        "masked_pred_loss": masked_pred_losses,
@@ -871,6 +896,7 @@ class InferenceCMI(Inference):
         # only consider full and masked distributions when updating causal mask
         if not self.update_num % (eval_freq * inference_gradient_steps):
             # pred_next_dist = pred_next_dist[:2]
+            # pred_loss = full_pred_loss + masked_pred_losses
             pred_loss = full_pred_loss + masked_pred_losses
 
         # # Transition loss for positive features
@@ -894,8 +920,9 @@ class InferenceCMI(Inference):
         rec_loss *= 10
         next_rec_loss *= 10
         # loss = pred_loss + rec_loss + next_rec_loss
+        rec_losses = rec_loss + next_rec_loss
         # loss = pred_loss + rec_loss + next_rec_loss - full_ll_loss - masked_ll_loss_curr_o2 + masked_ll_loss_next_o2
-        loss = pred_loss
+        # loss = pred_loss
 
         rec_loss_detail["rec_loss"] = rec_loss
         next_rec_loss_detail["next_rec_loss"] = next_rec_loss
@@ -904,8 +931,11 @@ class InferenceCMI(Inference):
         # loss_detail = {**loss_detail}
         loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail}
 
-        if not eval and torch.isfinite(loss):
-            self.backprop(loss, loss_detail)
+        # if not eval and torch.isfinite(loss):
+        #     self.backprop(loss, loss_detail)
+
+        if not eval:
+            self.backprop(pred_loss, rec_losses, loss_detail)
 
         return loss_detail
 
@@ -956,6 +986,7 @@ class InferenceCMI(Inference):
                 masked_pred_losses.append(masked_pred_loss)                 # [(bs, feature_dim)] * (feature_dim + 1)
 
             if len(self.params.hidden_keys) == 0:
+                # No hidden object
                 hidden_objects_ind = 1
                 # (bs, num_colors)
                 next_feature_hidden = next_feature[hidden_objects_ind].squeeze(dim=1)
@@ -974,7 +1005,7 @@ class InferenceCMI(Inference):
                 print("next_pred_hidden", pred_next_feature_hidden[:20])
                 eval_details["next_pred_hidden_acc"] = next_pred_hidden_acc
             else:
-                # 1 hidden object
+                # 1 hidden object and n_pred_step = 1
                 # (bs, )
                 next_hidden = [next_hidden[key].long() for key in self.params.hidden_keys][0].squeeze(dim=1)
 
@@ -1199,7 +1230,7 @@ class InferenceCMI(Inference):
 
     def save(self, path):
         torch.save({"model": self.state_dict(),
-                    "optimizer_encoder": self.optimizer_encoder.state_dict(),
+                    "optimizer_enc_decoder": self.optimizer_enc_decoder.state_dict(),
                     "optimizer_transition": self.optimizer_transition.state_dict(),
                     "mask_CMI": self.mask_CMI,
                     }, path)

@@ -42,7 +42,7 @@ class Inference(nn.Module):
         self.to(device)
 
         self.parameters_transition = list(self.parameters())
-        self.optimizer_transition = optim.Adam(self.parameters_transition, lr=inference_params.lr)
+        self.optimizer_transition = optim.Adam(self.parameters_transition, lr=inference_params.lr_0)
         # self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=inference_params.lr_scheduler_step_size,
         #                                      gamma=inference_params.lr_scheduler_gamma, verbose=False)
         self.dropout = nn.Dropout(p=inference_params.dropout)
@@ -51,9 +51,10 @@ class Inference(nn.Module):
         self.decoder = decoder
         self.parameters_encoder = list(self.encoder.parameters())
         self.parameters_decoder = list(self.decoder.parameters())
-        self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=inference_params.lr)
-        # self.optimizer_enc_decoder = optim.Adam(
-        #     self.parameters_encoder + self.parameters_decoder, lr=inference_params.lr)
+        # self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=3*inference_params.lr)
+        self.optimizer_enc_decoder = optim.Adam(
+            self.parameters_encoder + self.parameters_decoder, lr=inference_params.lr_0)
+        self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr_0)
 
         self.load(params.training_params.load_inference, device)
         self.train()
@@ -155,6 +156,12 @@ class Inference(nn.Module):
                     sample_i = dist_i.rsample() if self.training else dist_i.mean
                 elif isinstance(dist_i, OneHotCategorical):
                     logits = dist_i.logits
+                    if self.training:
+                        sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
+                    else:
+                        sample_i = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
+                elif isinstance(dist_i, torch.Tensor):
+                    logits = dist_i
                     if self.training:
                         sample_i = F.gumbel_softmax(logits, tau=1, hard=True)
                     else:
@@ -281,25 +288,35 @@ class Inference(nn.Module):
                     # pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-                    # # Cross Entropy loss between two softmax distributions
-                    # next_feature = [next_feature_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                    #                 for next_feature_i in next_feature]
-                    # pred_dist = [pred_dist_i.probs.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                    #              for pred_dist_i in pred_dist]
-                    # pred_loss = [self.loss_ce(next_dist_i, pred_dist_i)  # [(bs, n_pred_step)] * feature_dim
-                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
+                    # Cross Entropy loss
+                    pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                                 for pred_dist_i in pred_dist]
+                    next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
+                                    for next_feature_i in next_feature]
+                    pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
+                                 for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
 
-                    # NLL loss of the OneHotCategorical distribution
-                    # (bs, n_pred_step, feature_dim)
-                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
+                    # # NLL loss of the OneHotCategorical distribution
+                    # # (bs, n_pred_step, feature_dim)
+                    # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
 
-                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
                 else:
                     # not backprop the gradient along the path of encoder
                     # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
 
-                    # NLL loss of the OneHotCategorical distribution
-                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
+                    # # NLL loss of the OneHotCategorical distribution
+                    # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
+
+                    # Cross Entropy loss / NLL
+                    pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                                 for pred_dist_i in pred_dist]
+                    next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
+                                    for next_feature_i in next_feature]
+                    pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
+                                 for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
+
+                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
 
         if not keep_variable_dim:
             pred_loss = pred_loss.sum(dim=-1)                                           # (bs, n_pred_step)

@@ -41,6 +41,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('TkAgg')
 
+
 def sample_process(batch_data, params):
     """
     :return obs_batch: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
@@ -141,6 +142,9 @@ def train(params):
     # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
     #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
     #                           1.])  # ["obj2"]
+    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
+    #                           0., 1., 0., 0., 0., 0., 0.,
+    #                           1.])  # ["obj2"]
     # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
     # mask_dset = torch.ones(dset_full_dim)
 
@@ -221,6 +225,13 @@ def train(params):
     episode_step = np.zeros(num_env) if is_vecenv else 0
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
+
+    # init training
+    transition_train_steps = inference_params.transition_train_steps
+    encoder_train_steps = encoder_params.encoder_train_steps
+    train_steps = encoder_train_steps + transition_train_steps
+    eval_tau = cmi_params.eval_tau_0
+    ss_flag = True
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
@@ -366,15 +377,19 @@ def train(params):
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
                                                rew_batch, next_rews_batch, mask_dset)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
+                loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
+                # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
 
             inference.eval()
             encoder.eval()
             decoder.eval()
-            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
+            # if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
+            # if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
+            #         inference.update_num % train_steps >= encoder_train_steps):
+            if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
+                    inference.update_num >= inference_params.pre_train_steps):
                 if use_cmi:
-                    eval_tau = cmi_params.eval_tau_0 \
-                        if (step + 1 - training_params.init_steps) / cmi_params.eval_freq == 1 else eval_tau
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
@@ -388,12 +403,17 @@ def train(params):
                         print("mask_CMI", inference.mask_CMI)
                         print("mask", inference.mask)
 
-                        if eval_pred_loss["eval_pred_loss"] < 0.01:
+                        if eval_pred_loss["eval_pred_loss"] < 0.015 and ss_flag:
+                        # if eval_pred_loss["next_pred_enco_hidden_acc"] == 1 and ss_flag:
                             eval_tau = cmi_params.eval_tau_ss
                             encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_ss
-                        else:
-                            eval_tau = cmi_params.eval_tau_0
-                            encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_0
+                            for param_group in inference.optimizer_transition.param_groups:
+                                param_group['lr'] = inference_params.lr_ss
+                            for param_group in inference.optimizer_enc_decoder.param_groups:
+                                param_group['lr'] = inference_params.lr_ss
+                            # for param_group in inference.optimizer.param_groups:
+                            #     param_group['lr'] = inference_params.lr_ss
+                            ss_flag = False
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
                     obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
@@ -427,7 +447,7 @@ def train(params):
 
             # inference.scheduler.step()
             '''
-            if (step + 1 - training_params.init_steps) % 100 == 0:
+            if (step + 1 - training_params.init_steps) % 500 == 0:
                 encoder.gumbel_temp *= feedforward_enc_params.gumbel_temp_decay_rate
                 print("gumbel_temperature", encoder.gumbel_temp)
             

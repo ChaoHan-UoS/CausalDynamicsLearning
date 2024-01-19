@@ -217,6 +217,43 @@ class ActorPPO(nn.Module):
             entropy.append(entropy_i)
         return torch.stack(log_prob), torch.stack(entropy)
 
+'''
+class ActorPPO(nn.Module):
+    def __init__(self, params):
+        super().__init__()
+        self.device = device = params.device
+        ppo_params = params.policy_params.ppo_params
+
+        self.net = build_mlp(dims=[state_dim, *dims, action_dim])
+        self.action_std_log = nn.Parameter(torch.zeros((1, action_dim)), requires_grad=True)  # trainable parameter
+
+
+    def forward(self, state):
+        return self.net(state).tanh()  # action.tanh()
+
+    def get_action(self, state):  # for exploration
+        action_avg = self.net(state)
+        action_std = self.action_std_log.exp()
+
+        dist = Normal(action_avg, action_std)
+        action = dist.sample()
+        logprob = dist.log_prob(action).sum(1)
+        return action, logprob
+
+    def get_logprob_entropy(self, state, action):
+        action_avg = self.net(state)
+        action_std = self.action_std_log.exp()
+
+        dist = Normal(action_avg, action_std)
+        logprob = dist.log_prob(action).sum(1)
+        entropy = dist.entropy().sum(1)
+        return logprob, entropy
+
+    @staticmethod
+    def convert_action_for_env(action):
+        return action.tanh()
+'''
+
 
 class CriticAdv(nn.Module):
     def __init__(self, encoder, params):
@@ -239,6 +276,23 @@ class CriticAdv(nn.Module):
         feature = self.encoder(state, detach=detach_encoder)
         return self.net(feature)
 
+'''
+class CriticAdv(nn.Module):
+    def __init__(self, dims: [int], state_dim: int, _action_dim: int):
+        super().__init__()
+        self.net = build_mlp(dims=[state_dim, *dims, 1])
+
+    def forward(self, state):
+        return self.net(state)  # advantage value
+
+
+def build_mlp(dims: [int]) -> nn.Sequential:  # MLP (MultiLayer Perceptron)
+    net_list = []
+    for i in range(len(dims) - 1):
+        net_list.extend([nn.Linear(dims[i], dims[i + 1]), nn.ReLU()])
+    del net_list[-1]  # remove the activation of output layer
+    return nn.Sequential(*net_list)
+'''
 
 class HiPPO(nn.Module):
     def __init__(self, encoder, inference, params):
@@ -293,10 +347,10 @@ class HiPPO(nn.Module):
         self.act_optim = torch.optim.Adam(self.actor.parameters(), self.lr)
         self.cri_optim = torch.optim.Adam(self.critic.parameters(), self.lr)
 
-        action_low, action_high = params.action_spec
-        self._action_bias, self._action_scale = (action_low + action_high) / 2, (action_high - action_low) / 2
-        self._action_ten_bias = torch.as_tensor(self._action_bias, dtype=torch.float32, device=self.device)
-        self._action_ten_scale = torch.as_tensor(self._action_scale, dtype=torch.float32, device=self.device)
+        # action_low, action_high = params.action_spec
+        # self._action_bias, self._action_scale = (action_low + action_high) / 2, (action_high - action_low) / 2
+        # self._action_ten_bias = torch.as_tensor(self._action_bias, dtype=torch.float32, device=self.device)
+        # self._action_ten_scale = torch.as_tensor(self._action_scale, dtype=torch.float32, device=self.device)
 
         self.buffer = []
 
@@ -390,6 +444,16 @@ class HiPPO(nn.Module):
     def zip_buf_state(self, buf_state):
         # from list of dict to dict of list, then np.stack to each value
         # not sure whether we need preprocess_obs
+        # Input:
+        # buf_state = [
+        #     {'feature1': value1_1, 'feature2': value2_1},
+        #     {'feature1': value1_2, 'feature2': value2_2},
+        #     ...]
+        # Output:
+        # {'feature1': tensor([value1_1, value1_2, ...], device=device_type),
+        #  'feature2': tensor([value2_1, value2_2, ...], device=device_type),
+        #  ...}
+
         buf_state = {k: torch.from_numpy(np.stack([dic[k] for dic in buf_state])).to(self.device).float()
                      for k in buf_state[0]}
         return buf_state
@@ -399,6 +463,7 @@ class HiPPO(nn.Module):
         if len(self.ready_trajectory_list) < self.target_step:
             return {}
 
+        # [[obs1, obs2, ...], [action1, action2, ...], [done1, done2, ...], [next_obs1, next_obs2, ...]]
         _trajectory = list(map(list, zip(*self.ready_trajectory_list)))  # 2D-list transpose
         ten_state = self.zip_buf_state(_trajectory[0])
         ten_action = torch.as_tensor(np.array(_trajectory[1]), dtype=torch.float32, device=self.device)

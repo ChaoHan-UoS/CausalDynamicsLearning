@@ -85,7 +85,7 @@
         }
     },
     "encoder_params": {
-        "encoder_train_steps": 50,
+        "encoder_train_steps": 1000,
         "encoder_type": "feedforward",
          "recurrent_enc_params": {
             "layer_num": 2,
@@ -96,9 +96,9 @@
             "feature_fc_dims": [64, 64],
             "generative_fc_dims": [64, 64],
             "dropout": 0,
-            "gumbel_temp_0": 1,
+            "gumbel_temp_0": 10,
             "gumbel_temp_ss": 1,
-            "gumbel_temp_decay_rate": 1,
+            "gumbel_temp_decay_rate": 0.99,
             "dset_eval_freq": 10000000
           }
     },
@@ -107,14 +107,16 @@
          "feedforward_dec_params": {
             "hidden_layer_size": 128,
             "dropout": 0,
-            "categorical_rew": false
+            "categorical_rew": true
          }
     },
     "inference_params": {
-        "transition_train_steps": 450,
+        "pre_train_steps": 2000,
+        "transition_train_steps": 1000,
         "n_pred_step": 1,
         "batch_size": 128,
-        "lr": 1e-4,
+        "lr_0": 1e-3,
+        "lr_ss": 1e-4,
         "lr_scheduler_step_size": 100,
         "lr_scheduler_gamma": 0.999,
         "dropout": 0,
