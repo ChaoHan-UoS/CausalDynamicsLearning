@@ -3,6 +3,7 @@ import sys
 
 os.environ['JUPYTER_PLATFORM_DIRS'] = '1'
 
+from collections import Counter
 import numpy as np
 
 import torch
@@ -18,6 +19,7 @@ from model.inference_gnn import InferenceGNN
 from model.inference_reg import InferenceReg
 from model.inference_nps import InferenceNPS
 from model.inference_cmi import InferenceCMI
+from model.inference_utils import obs_batch_dict2tuple, count2prob, count2prob_llh
 
 from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
@@ -39,6 +41,7 @@ from env.chemical_env import Chemical
 
 import matplotlib.pyplot as plt
 import matplotlib
+
 matplotlib.use('TkAgg')
 
 
@@ -89,8 +92,8 @@ def sample_process(batch_data, params):
 
 
 def train(params):
-    # device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
-    device = torch.device("cpu")
+    device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cpu")
     set_seed_everywhere(params.seed)
 
     params.device = device
@@ -127,9 +130,9 @@ def train(params):
     # mask_dset = torch.tensor([0., 1.,
     #                           0., 1.,
     #                           1.])  # ["obj2"]
-    mask_dset = torch.tensor([0., 1., 0., 0.,
-                              0., 1., 0., 0.,
-                              1.])  # ["obj2"]
+    # mask_dset = torch.tensor([0., 1., 0., 0.,
+    #                           0., 1., 0., 0.,
+    #                           1.])  # ["obj2"]
     # mask_dset = torch.tensor([1., 1., 1., 1.,
     #                           1., 1., 1., 1.,
     #                           1.])  # ["obj2"]
@@ -142,9 +145,9 @@ def train(params):
     # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
     #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
     #                           1.])  # ["obj2"]
-    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
-    #                           0., 1., 0., 0., 0., 0., 0.,
-    #                           1.])  # ["obj2"]
+    mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
+                              0., 1., 0., 0., 0., 0., 0.,
+                              1.])  # ["obj2"]
     # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
     # mask_dset = torch.ones(dset_full_dim)
 
@@ -226,6 +229,10 @@ def train(params):
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
 
+    # init counting-based probability
+    count_env_transition = training_params.count_env_transition
+    oao_counts = Counter()
+
     # init training
     transition_train_steps = inference_params.transition_train_steps
     encoder_train_steps = encoder_params.encoder_train_steps
@@ -233,12 +240,16 @@ def train(params):
     eval_tau = cmi_params.eval_tau_0
     ss_flag = True
 
+    # save plots
+    plot_dir = os.path.join(params.rslts_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
+
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
-        is_enc_pretrain = 0 <= step - training_params.init_steps < training_params.enc_pretrain_steps
+        is_pre_train = training_params.init_steps - 1 <= step < inference_params.pre_train_steps + training_params.init_steps
         if (step + 1) % 100 == 0:
-            print("{}/{}, init_stage: {}, enc_pretrain_stage: {},".format(step + 1, total_steps, is_init_stage,
-                                                                              is_enc_pretrain))
+            print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
+                                                                       is_init_stage, is_pre_train))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -358,12 +369,27 @@ def train(params):
             if rl_algo == "hippo" and not is_init_stage:
                 policy.update_trajectory_list(obs, action, done, next_obs, info)
 
+            # counting-based probability construction P2(obs, action, next_obs)
+            if count_env_transition:
+                # convert to tuple for hashing
+                oa = {k: obs[k] for k in params.obs_keys_f + ['act'] if k in obs}
+                next_o = {k: next_obs[k] for k in params.obs_keys_f if k in next_obs}
+                oa_tup = tuple((k, tuple(v)) for k, v in oa.items())
+                next_o_tup = tuple((k, tuple(v)) for k, v in next_o.items())
+                oao_tup = oa_tup + next_o_tup
+
+                # Counting transitions
+                oao_counts.update([oao_tup])
+
             obs = next_obs
             obs_f = next_obs_f
 
         # training
         if is_init_stage:
             continue
+
+        if count_env_transition:
+            oao_probs = count2prob(oao_counts)
 
         if inference_gradient_steps > 0:
             inference.train()
@@ -372,14 +398,48 @@ def train(params):
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
-                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch =\
+                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
                     sample_process(batch_data, params)
+
+                oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
+                oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
+                oao_llh = count2prob_llh(oao_probs, oao_batch)
+
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                                               rew_batch, next_rews_batch, mask_dset)
+                                               rew_batch, next_rews_batch, mask_dset, oao_llh)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
+
+                if (step + 1) % training_params.plot_prob_freq == 0 or step == training_params.init_steps:
+                    oao_probs = list(oao_probs.values())
+                    len_oao = len(oao_probs)
+                    print(f'Number of oao probs: {len_oao}')
+
+                    hoa_probs = list(encoder.hoa_probs.values())
+                    len_hoa = len(hoa_probs)
+                    print(f'Number of hoa probs: {len_hoa}')
+
+                    # fig, axs = plt.subplots(2, 1, figsize=(8, 6))
+                    #
+                    # # Plotting the oao probability distribution
+                    # axs[0].bar(range(len_oao), oao_probs, color='blue')
+                    # axs[0].set_title(f'oao probs with {len_oao} probs')
+                    # axs[0].set_xlabel('oao')
+                    # axs[0].set_ylabel('oao_probs')
+                    #
+                    # # Plotting the second probability distribution
+                    # axs[1].bar(range(len_hoa), hoa_probs, color='green')
+                    # axs[1].set_title(f'hoa probs with {len_hoa} probs')
+                    # axs[1].set_xlabel('hoa')
+                    # axs[1].set_ylabel('hoa_probs')
+                    #
+                    # plt.tight_layout()
+                    # filename = os.path.join(plot_dir, f"probs_step_{step + 1}.png")
+                    # plt.savefig(filename)
+                    # plt.clf()
+                    # sys.exit()
 
             inference.eval()
             encoder.eval()
@@ -404,7 +464,7 @@ def train(params):
                         print("mask", inference.mask)
 
                         if eval_pred_loss["eval_pred_loss"] < 0.015 and ss_flag:
-                        # if eval_pred_loss["next_pred_enco_hidden_acc"] == 1 and ss_flag:
+                            # if eval_pred_loss["next_pred_enco_hidden_acc"] == 1 and ss_flag:
                             eval_tau = cmi_params.eval_tau_ss
                             encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_ss
                             for param_group in inference.optimizer_transition.param_groups:
@@ -435,7 +495,7 @@ def train(params):
                             else:
                                 mask_dset[h_idx, :encoder.num_dset_obs] = 1
                             # mask_dset[h_idx, i_idx] = 1
-                            mask_dset[h_idx, encoder.num_dset_obs: (2 * encoder.num_dset_obs)] +=\
+                            mask_dset[h_idx, encoder.num_dset_obs: (2 * encoder.num_dset_obs)] += \
                                 F.one_hot(torch.tensor(i_idx), encoder.num_dset_obs)
                             # mask_dset[h_idx, -1] = mask[i, -1]
                             # break
@@ -443,7 +503,6 @@ def train(params):
                     if (mask_dset[h_idx, :encoder.num_dset_obs] == 0).all():
                         mask_dset[h_idx, :encoder.num_dset_obs] = 1
                 print("mask_dset:", mask_dset)
-
 
             # inference.scheduler.step()
             '''

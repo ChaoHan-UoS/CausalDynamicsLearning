@@ -76,8 +76,8 @@ def forward_gated_network(input, weights, biases, gate_weights, gate_biases, det
             # gate_log_alpha (bs, p_bs, in_dim), bs: data batch size
             # w (p_bs, out_dim, in_dim), p_bs: parameter batch size
             # b (p_bs, out_dim)
-            gate_log_alpha = gate_log_alpha.unsqueeze(dim=-2)         # (bs, p_bs, 1, in_dim)
-            gate_log_alpha = (gate_log_alpha * w).sum(dim=-1) + b     # (bs, p_bs, out_dim)
+            gate_log_alpha = gate_log_alpha.unsqueeze(dim=-2)  # (bs, p_bs, 1, in_dim)
+            gate_log_alpha = (gate_log_alpha * w).sum(dim=-1) + b  # (bs, p_bs, out_dim)
             if i < len(gate_weights) - 1 and activation:
                 gate_log_alpha = activation(gate_log_alpha)
 
@@ -91,8 +91,8 @@ def forward_gated_network(input, weights, biases, gate_weights, gate_biases, det
         # x (bs, p_bs, in_dim), bs: data batch size
         # w (p_bs, out_dim, in_dim), p_bs: parameter batch size
         # b (p_bs, out_dim)
-        x = x.unsqueeze(dim=-2)                         # (bs, p_bs, 1, in_dim)
-        x = (x * w).sum(dim=-1) + b                     # (bs, p_bs, out_dim)
+        x = x.unsqueeze(dim=-2)  # (bs, p_bs, 1, in_dim)
+        x = (x * w).sum(dim=-1) + b  # (bs, p_bs, out_dim)
         if i < len(weights) - 1 and activation:
             x = activation(x)
         if i == len(weights) - 2 and gate is not None:
@@ -148,3 +148,42 @@ def get_state_abstraction(mask):
         abstraction_graph[idx] = [i for i, e in enumerate(mask[idx]) if e]
 
     return abstraction_graph
+
+
+def obs_batch_dict2tuple(obs, params):
+    """
+    :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+    :return: oa_batch / next_o_batch: [tuple('obs_i_key', (obs_i_value,))] * bs
+    """
+    bs = len(obs[next(iter(dict(obs)))])
+
+    # convert to a bs length list of tuples for hashing
+    oa = {k: obs[k] for k in params.obs_keys_f + ['act'] if k in obs}
+    oa_batch = [tuple((k, (v[i, 1].squeeze().item(),))
+                      for k, v in oa.items())
+                for i in range(bs)]
+    next_o = {k: obs[k] for k in params.obs_keys_f if k in obs}
+    next_o_batch = [tuple((k, (v[i, 2].squeeze().item(),))
+                          for k, v in next_o.items())
+                    for i in range(bs)]
+
+    return oa_batch, next_o_batch
+
+
+def count2prob(counter):
+    """
+    :param counter: Counter({key: count})
+    :return: probs: {key: prob}
+    """
+    total_counts = sum(counter.values())
+    probs = {t: count / total_counts for t, count in counter.items()}
+    return probs
+
+
+def count2prob_llh(probs, batch):
+    """
+    :param probs: {key_i: prob_i}
+    :param batch: [key] * bs
+    :return: (bs, ) likelihoods
+    """
+    return torch.tensor([probs[k] for k in batch])

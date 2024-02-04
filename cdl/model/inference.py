@@ -180,8 +180,8 @@ class Inference(nn.Module):
             notice that bs can be a multi-dimensional batch size
         :param value:
             if state space is continuous: (bs, feature_dim).
-            else: [(bs, feature_i_dim)]
-            # feature_i_dim is expected to be an one-hot value (Expected value argument of .log_prob(value) to be within
+            else: [(bs, feature_i_dim)]  * feature_dim
+            # feature_i_dim is expected to be a one-hot value (Expected value argument of .log_prob(value) to be within
             # the support (OneHot()) of the distribution OneHotCategorical())
         :return: (bs, feature_dim)
         """
@@ -288,35 +288,35 @@ class Inference(nn.Module):
                     # pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
                     #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
 
-                    # Cross Entropy loss
-                    pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                                 for pred_dist_i in pred_dist]
-                    next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
-                                    for next_feature_i in next_feature]
-                    pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
-                                 for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
+                    # # Cross Entropy loss
+                    # pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                    #              for pred_dist_i in pred_dist]
+                    # next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
+                    #                 for next_feature_i in next_feature]
+                    # pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
+                    #              for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
+                    #
+                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
 
-                    # # NLL loss of the OneHotCategorical distribution
-                    # # (bs, n_pred_step, feature_dim)
-                    # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
-
-                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                    # NLL loss of the OneHotCategorical distribution
+                    # (bs, n_pred_step, feature_dim)
+                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
                 else:
                     # not backprop the gradient along the path of encoder
                     # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
 
-                    # # NLL loss of the OneHotCategorical distribution
-                    # pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
+                    # NLL loss of the OneHotCategorical distribution
+                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
 
-                    # Cross Entropy loss / NLL
-                    pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                                 for pred_dist_i in pred_dist]
-                    next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
-                                    for next_feature_i in next_feature]
-                    pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
-                                 for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
-
-                    pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                    # # Cross Entropy loss / NLL
+                    # pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
+                    #              for pred_dist_i in pred_dist]
+                    # next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
+                    #                 for next_feature_i in next_feature]
+                    # pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
+                    #              for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
+                    #
+                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
 
         if not keep_variable_dim:
             pred_loss = pred_loss.sum(dim=-1)                                           # (bs, n_pred_step)
