@@ -42,7 +42,7 @@ from env.chemical_env import Chemical
 import matplotlib.pyplot as plt
 import matplotlib
 
-matplotlib.use('TkAgg')
+# matplotlib.use('TkAgg')
 
 
 def sample_process(batch_data, params):
@@ -142,12 +142,12 @@ def train(params):
     #                           [0., 0., 1., 0., 0., 0., 0., 0.,
     #                            0., 0., 1., 0., 0., 0., 0., 0.,
     #                            1.]])  # ["obj2", "obj4"]
-    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
-    #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
-    #                           1.])  # ["obj2"]
-    mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
-                              0., 1., 0., 0., 0., 0., 0.,
+    mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
+                              0., 1., 0., 0., 0., 0., 0., 0., 0.,
                               1.])  # ["obj2"]
+    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
+    #                           0., 1., 0., 0., 0., 0., 0.,
+    #                           1.])  # ["obj2"]
     # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
     # mask_dset = torch.ones(dset_full_dim)
 
@@ -401,17 +401,20 @@ def train(params):
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
                     sample_process(batch_data, params)
 
-                oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
-                oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
-                oao_llh = count2prob_llh(oao_probs, oao_batch)
+                # oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
+                # oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
+                # oao_llh = count2prob_llh(oao_probs, oao_batch).to(params.device)
 
+                # loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
+                #                                rew_batch, next_rews_batch, mask_dset, oao_llh)
                 loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                                               rew_batch, next_rews_batch, mask_dset, oao_llh)
+                                               rew_batch, next_rews_batch, mask_dset)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
 
+                '''
                 if (step + 1) % training_params.plot_prob_freq == 0 or step == training_params.init_steps:
                     oao_probs = list(oao_probs.values())
                     len_oao = len(oao_probs)
@@ -440,6 +443,7 @@ def train(params):
                     # plt.savefig(filename)
                     # plt.clf()
                     # sys.exit()
+                '''
 
             inference.eval()
             encoder.eval()

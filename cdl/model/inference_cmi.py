@@ -837,7 +837,7 @@ class InferenceCMI(Inference):
     #     self.optimizer.step()
     #     return loss_detail
 
-    def update(self, obs, actions, next_obses, rew, next_rews, mask_dset, oao_llh, eval=False):
+    def update(self, obs, actions, next_obses, rew, next_rews, mask_dset, oao_llh=None, eval=False):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
         :param actions: (bs, n_pred_step, action_dim)  # not one-hot representation
@@ -865,10 +865,10 @@ class InferenceCMI(Inference):
         next_hidden_dist, next_hidden_feature, next_feature, next_feature_target, next_hoa_llh = (
             self.encoder(next_obses, mask_dset))
 
-        # (bs, num_hidden_objects)
-        h_llh_features = torch.exp(self.log_prob_from_distribution(hidden_dist, hidden_feature))
-        # (bs, )
-        h_llh = torch.prod(h_llh_features, dim=1)
+        # # (bs, num_hidden_objects)
+        # h_llh_features = torch.exp(self.log_prob_from_distribution(hidden_dist, hidden_feature))
+        # # (bs, )
+        # h_llh = torch.prod(h_llh_features, dim=1)
 
         # # Transition of features
         # # pred_next_feature: softmax samples from pred_next_dist
@@ -911,16 +911,16 @@ class InferenceCMI(Inference):
             # pred_next_dist = pred_next_dist[:2]
             pred_loss = full_pred_loss + masked_pred_losses
 
-        # (bs, n_pred_step, num_objects)
-        o_llh_features = torch.exp(self.log_prob_from_distribution(pred_next_dists[0], pred_next_features[0]))
-        # (bs, num_observables)
-        o_llh_observables = o_llh_features.squeeze(dim=1)[:, self.obs_objects_ind]
-        # (bs, )
-        o_llh = torch.prod(o_llh_observables, dim=1)
-        z = 1e5 * torch.mean(torch.abs(o_llh * hoa_llh - h_llh * oao_llh))
+        # # (bs, n_pred_step, num_objects)
+        # o_llh_features = torch.exp(self.log_prob_from_distribution(pred_next_dists[0], pred_next_features[0]))
+        # # (bs, num_observables)
+        # o_llh_observables = o_llh_features.squeeze(dim=1)[:, self.obs_objects_ind]
+        # # (bs, )
+        # o_llh = torch.prod(o_llh_observables, dim=1)
+        # z = 1e5 * torch.mean(torch.abs(o_llh * hoa_llh - h_llh * oao_llh))
         # z = torch.mean(torch.abs(o_llh - h_llh))
         # pred_loss += z
-        loss_detail["z"] = z
+        # loss_detail["z"] = z
 
         # # Transition loss for positive features
         # pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)

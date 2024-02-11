@@ -276,6 +276,7 @@ class ForwardEncoder(nn.Module):
         super().__init__()
 
         self.params = params
+        self.device = params.device
         self.feedforward_enc_params = params.encoder_params.feedforward_enc_params
 
         self.continuous_state = params.continuous_state
@@ -790,10 +791,10 @@ class ForwardEncoder(nn.Module):
                              for hiddens_batch in zip(*enc_feature)]
             hoa_batch = [(hidden,) + oa for hidden, oa in zip(hiddens_batch, oa_batch)]
 
-            # Batch-wise update the counting-based probability P1 of each tuple (hidden, obs, action)
-            self.hoa_counts.update(hoa_batch)
-            self.hoa_probs = count2prob(self.hoa_counts)
-            hoa_llh = count2prob_llh(self.hoa_probs, hoa_batch)
+            # # Batch-wise update the counting-based probability P1 of each tuple (hidden, obs, action)
+            # self.hoa_counts.update(hoa_batch)
+            # self.hoa_probs = count2prob(self.hoa_counts)
+            # hoa_llh = count2prob_llh(self.hoa_probs, hoa_batch).to(self.device)
 
             """concatenate outputs of FNN and masked MLP"""
             enc_obs = None
@@ -817,7 +818,8 @@ class ForwardEncoder(nn.Module):
                                + obs_obs_forward[self.hidden_objects_ind[1] - 1:])
             # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
             enc_obs_obj, enc_obs_target = enc_obs[: self.num_objects], enc_obs[self.num_objects:]
-            return enc_dist, enc_feature, enc_obs_obj, enc_obs_target, hoa_llh
+            # return enc_dist, enc_feature, enc_obs_obj, enc_obs_target, hoa_llh
+            return enc_dist, enc_feature, enc_obs_obj, enc_obs_target, None
 
 
 def obs_encoder(params):
