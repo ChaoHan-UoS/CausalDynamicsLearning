@@ -388,6 +388,7 @@ class ForwardEncoder(nn.Module):
 
         # predictor
         in_dim = feedforward_enc_params.feature_fc_dims[-1]
+        # in_dim = 2 * feedforward_enc_params.feature_fc_dims[-1]
         for out_dim in feedforward_enc_params.generative_fc_dims:
             self.generative_weights.append(nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
             self.generative_biases.append(nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
@@ -469,7 +470,7 @@ class ForwardEncoder(nn.Module):
     def predict_from_sa_feature(self, sa_feature, residual_base=None):
         """
         predict the distribution and sample for the next step value of all state variables
-        :param sa_feature: # (num_hidden_objects, bs, out_dim)
+        :param sa_feature: (num_hidden_objects, bs, out_dim)
         :param residual_base: (bs, feature_dim), residual used for continuous state variable prediction
         :return: if state space is continuous: a Normal distribution of shape (bs, feature_dim)
             else: [OneHotCategorical / Normal] * num_hidden_objects, each of shape (bs, num_colors)
@@ -522,6 +523,10 @@ class ForwardEncoder(nn.Module):
         # (bs, action_dim) -> (num_hidden_objects, 1, bs, out_dim)
         self.action_feature = action_feature = self.extract_action_feature(action)
 
+        # ids for element-wise max at current and next time step
+        ids_sa = list(range(self.num_dset_obs)) + [-1]
+        ids_next_s = list(range(self.num_dset_obs, self.feature_dim_dset))
+
         if forward_full:
             # 1. extract features of all state variables
             # [(bs, num_colors)] * feature_dim_dset -> (num_hidden_objects, feature_dim_dset, bs, out_dim)
@@ -532,8 +537,14 @@ class ForwardEncoder(nn.Module):
             full_sa_feature = torch.cat([full_state_feature, action_feature], dim=1)
             full_sa_feature, full_sa_indices = full_sa_feature.max(dim=1)           # (num_hidden_objects, bs, out_dim)
 
+            # # (num_hidden_objects, bs, out_dim)
+            # full_feature_sa, full_indices_sa = full_sa_feature[:, ids_sa].max(dim=1)
+            # full_feature_next_s, full_indices_next_s = full_sa_feature[:, ids_next_s].max(dim=1)
+            # full_sa_feature_cat = torch.cat((full_feature_sa, full_feature_next_s), dim=-1)  # (num_hidden_objects, bs, 2 * out_dim)
+
             # 3. predict the distribution of next time step value
             full_dist = self.predict_from_sa_feature(full_sa_feature, full_feature)  # [(bs, num_colors)] * num_hidden_objects
+            # full_dist = self.predict_from_sa_feature(full_sa_feature_cat, full_feature)  # [(bs, num_colors)] * num_hidden_objects
 
         if forward_masked:
             # 1. extract features of all state variables
@@ -548,8 +559,14 @@ class ForwardEncoder(nn.Module):
             masked_sa_feature[~mask] = float('-inf')
             masked_sa_feature, masked_sa_indices = masked_sa_feature.max(dim=1)     # (num_hidden_objects, bs, out_dim)
 
+            # # (num_hidden_objects, bs, out_dim)
+            # masked_feature_sa, masked_indices_sa = masked_sa_feature[:, ids_sa].max(dim=1)
+            # masked_feature_next_s, masked_indices_next_s = masked_sa_feature[:, ids_next_s].max(dim=1)
+            # masked_sa_feature_cat = torch.cat((masked_feature_sa, masked_feature_next_s), dim=-1)  # (num_hidden_objects, bs, 2 * out_dim)
+
             # 3. predict the distribution of next time step value
             masked_dist = self.predict_from_sa_feature(masked_sa_feature, masked_feature)  # [(bs, num_colors)] * num_hidden_objects
+            # masked_dist = self.predict_from_sa_feature(masked_sa_feature_cat, masked_feature)  # [(bs, num_colors)] * num_hidden_objects
 
         return full_dist, masked_dist
 
@@ -701,125 +718,145 @@ class ForwardEncoder(nn.Module):
         bool_mask = int_mask < 1
         return bool_mask  # (bs, num_hidden_objects, feature_dim_dset + 1)
 
-    def forward(self, obs, mask_dset):
+    def preprocess_obs(self, obs):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+        :return feature: [[(bs, num_colors)] * (num_dset_observables * (stack_num - 1))] * n_pred_step or
+                          [(bs, num_colors)] * (num_dset_observables * (stack_num - 1))
+                action: [(bs, action_dim)] * n_pred_step or
+                         (bs, action_dim)
+        """
+        obs = [obs_k_i
+               for k in self.keys_remapped_dset
+               for obs_k_i in torch.unbind(obs[k], dim=-1)]
+        obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
+               for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim_dset_obses)]
+
+        # slice in object observables from observation
+        # (num_dset_observables, bs, stack_num - 1, (n_pred_step), num_colors)
+        obs_obs = torch.stack(obs[:-2], dim=0)[:, :, 1:]
+
+        # slice in action and reward from observation
+        # (bs, 1, (n_pred_step), action_dim / reward_dim)
+        obs_act, obs_rew = obs[-2].clone()[:, 1:2], obs[-1].clone()[:, 1:2]
+
+        if len(obs_obs.shape) == 5:
+            # (bs, n_pred_step, num_colors, stack_num - 1, num_dset_observables)
+            obs_obs = obs_obs.permute(1, 3, 4, 2, 0)
+            # (bs, n_pred_step, num_colors, num_dset_observables * (stack_num - 1))
+            obs_obs = obs_obs.reshape(obs_obs.shape[:3] + (-1,))
+
+            # [[(bs, num_colors)] * (num_dset_observables * (stack_num - 1))] * n_pred_step
+            feature = [torch.unbind(obs_obs_i, dim=-1)
+                       for obs_obs_i in
+                       torch.unbind(obs_obs, dim=1)]
+            # [(bs, action_dim)] * n_pred_step
+            action = [obs_act_i.squeeze(dim=1)
+                      for obs_act_i in
+                      torch.unbind(obs_act, dim=-2)]
+        else:
+            # (bs, num_colors, stack_num - 1, num_dset_observables)
+            obs_obs = obs_obs.permute(1, 3, 2, 0)
+            # (bs, num_colors, num_dset_observables * (stack_num - 1))
+            obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))
+
+            # [(bs, num_colors)] * (num_dset_observables * (stack_num - 1))
+            feature = torch.unbind(obs_obs, dim=-1)
+            # (bs, action_dim)
+            action = obs_act.squeeze(dim=1)
+        return feature, action
+
+    def feedforward_net(self, obs):
+        """
+        FNN as identity map of observables
+        :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+        :return obs_obs_forward: [(bs, (n_pred_step), num_colors)] * num_observables
+        """
+        obs_forward = [obs_k_i
+                       for k in self.keys
+                       for obs_k_i in torch.unbind(obs[k], dim=-1)]
+        obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
+                       for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_obs)]
+
+        # (num_observables, bs, stack_num, (n_pred_step), num_colors)
+        obs_obs_forward = torch.stack(obs_forward, dim=0)
+
+        # slice the current obs from the stack_num history
+        # [(bs, (n_pred_step), num_colors)] * num_observables
+        obs_obs_forward = list(torch.unbind(obs_obs_forward[:, :, -2]))
+        return obs_obs_forward
+
+    def forward(self, obs, feature, action, mask_dset):
+        """
+        masked MLP fed by d-set
+        :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
+        :param feature: [[(bs, num_colors)] * (num_dset_observables * (stack_num - 1))] * n_pred_step or
+                         [(bs, num_colors)] * (num_dset_observables * (stack_num - 1))
+        :param action: [(bs, action_dim)] * n_pred_step or (bs, action_dim)
         :param mask_dset: (num_hidden_objects, feature_dim_dset + 1)
         the second dim represents binary d-sets at t, t+1 and binary action at t
         :return enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
-                enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
                 hoa_llh: (bs, ) likelihoods of (hidden, obs, action)
         """
         bs = len(obs[next(iter(dict(obs)))])
         oa_batch = obs_batch_dict2tuple(obs, self.params)[0]
 
-        if self.continuous_state:
-            # overwrite some observations for out-of-distribution evaluation
-            if not getattr(self, "manipulation_train", True):
-                test_scale = self.manipulation_test_scale
-                obs = {k: torch.randn_like(v) * test_scale if "marker" in k else v
-                       for k, v in obs.items()}
-            obs = torch.cat([obs[k] for k in self.keys], dim=-1)
-            return obs
-        else:
-            """FNN as identity map of observables"""
-            obs_forward = [obs_k_i
-                           for k in self.keys
-                           for obs_k_i in torch.unbind(obs[k], dim=-1)]
-            obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-                           for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_obs)]
+        forward_mode = ("masked",)
+        # (bs, num_hidden_objects, feature_dim_dset + 1)
+        mask = torch.ones(bs, self.num_hidden_objects, self.feature_dim_dset + 1, dtype=torch.bool,
+                          device=self.device)
+        mask[:] = mask_dset.bool()  # broadcast along bs
 
-            obs_obs_forward = torch.stack(obs_forward, dim=0)  # (num_observables, bs, stack_num, (n_pred_step), num_colors)
-            # slice the current obs from the stack_num history
-            obs_obs_forward = list(torch.unbind(obs_obs_forward[:, :, -2]))  # [(bs, (n_pred_step), num_colors)] * num_observables
+        # enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
+        enc_dist, enc_feature = self.forward_with_feature(feature, action, mask, forward_mode=forward_mode)
 
-            # identity encoder in the fully observable
-            if len(self.hidden_ind) == 0:
-                # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
-                enc_obs_obj, enc_obs_target = obs_obs_forward[: self.num_objects], obs_obs_forward[self.num_objects:]
-                return enc_obs_obj, enc_obs_target
-
-            """masked MLP fed by d-set"""
-            obs = [obs_k_i
-                   for k in self.keys_remapped_dset
-                   for obs_k_i in torch.unbind(obs[k], dim=-1)]
-            obs = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
-                   for obs_i, obs_i_dim in zip(obs, self.feature_inner_dim_dset_obses)]
-
-            # slice in object and target observables from observation
-            # (num_dset_observables, bs, stack_num - 1, (n_pred_step), num_colors)
-            obs_obs = torch.stack(obs[:-2], dim=0)[:, :, 1:]
-
-            # slice in action and reward from observation
-            # (bs, 1, (n_pred_step), action_dim / reward_dim)
-            obs_act, obs_rew = obs[-2].clone()[:, 1:2], obs[-1].clone()[:, 1:2]
-
-            if len(obs_obs.shape) == 5:
-                # (bs, n_pred_step, num_colors, stack_num - 1, num_dset_observables)
-                obs_obs = obs_obs.permute(1, 3, 4, 2, 0)
-                # (bs, n_pred_step, num_colors, num_dset_observables * (stack_num - 1))
-                obs_obs = obs_obs.reshape(obs_obs.shape[:3] + (-1,))
-
-                # [[(bs, num_colors)] * (num_dset_observables * (stack_num - 1))] * n_pred_step
-                features = [torch.unbind(obs_obs_i, dim=-1)
-                            for obs_obs_i in
-                            torch.unbind(obs_obs, dim=1)]
-                # [(bs, action_dim)] * n_pred_step
-                actions = [obs_act_i.squeeze(dim=1)
-                           for obs_act_i in
-                           torch.unbind(obs_act, dim=-2)]
-            else:
-                # (bs, num_colors, stack_num - 1, num_dset_observables)
-                obs_obs = obs_obs.permute(1, 3, 2, 0)
-                # (bs, num_colors, num_dset_observables * (stack_num - 1))
-                obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))
-
-                # [(bs, num_colors)] * (num_dset_observables * (stack_num - 1))
-                features = torch.unbind(obs_obs, dim=-1)
-                # (bs, action_dim)
-                actions = obs_act.squeeze(dim=1)
-
-            forward_mode = ("masked",)
-            # (bs, num_hidden_objects, feature_dim_dset + 1)
-            mask = torch.ones(bs, self.num_hidden_objects, self.feature_dim_dset + 1, dtype=torch.bool)
-            mask[:] = mask_dset.bool()  # broadcast along bs
-
-            # enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
-            enc_dist, enc_feature = self.forward_with_feature(features, actions, mask, forward_mode=forward_mode)
-
+        # Batch-wise update the counting-based probability P1 of each tuple (hidden, obs, action)
+        if self.params.training_params.count_env_transition:
             hiddens_batch = [tuple(hidden.argmax(-1).squeeze().item() for hidden in hiddens_batch)
                              for hiddens_batch in zip(*enc_feature)]
             hoa_batch = [(hidden,) + oa for hidden, oa in zip(hiddens_batch, oa_batch)]
+            self.hoa_counts.update(hoa_batch)
+            self.hoa_probs = count2prob(self.hoa_counts)
+            hoa_llh = count2prob_llh(self.hoa_probs, hoa_batch).to(self.device)
+        else:
+            hoa_llh = None
+        return enc_dist, enc_feature, hoa_llh
 
-            # # Batch-wise update the counting-based probability P1 of each tuple (hidden, obs, action)
-            # self.hoa_counts.update(hoa_batch)
-            # self.hoa_probs = count2prob(self.hoa_counts)
-            # hoa_llh = count2prob_llh(self.hoa_probs, hoa_batch).to(self.device)
+    def concat_oh(self, obs_obs_forward, enc_feature):
+        """
+        concatenate outputs of FNN and masked MLP
+        :param obs_obs_forward: [(bs, (n_pred_step), num_colors)] * num_observables
+        :param enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
+        :return enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
+        """
+        # identity encoder in the fully observable
+        if len(self.hidden_ind) == 0:
+            # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
+            enc_obs_obj, enc_obs_target = obs_obs_forward[: self.num_objects], obs_obs_forward[self.num_objects:]
+            return enc_obs_obj, enc_obs_target
 
-            """concatenate outputs of FNN and masked MLP"""
-            enc_obs = None
-            if len(self.hidden_targets_ind) > 0:
+        enc_obs = None
+        if len(self.hidden_targets_ind) > 0:
+            enc_obs = (obs_obs_forward[: self.hidden_objects_ind[0]]
+                       + enc_feature[: self.num_hidden_objects]
+                       + obs_obs_forward[self.hidden_objects_ind[0]:
+                                         (self.num_obs_objects + self.hidden_targets_ind[0])]
+                       + enc_feature[self.num_hidden_objects:]
+                       + obs_obs_forward[(self.num_obs_objects + self.hidden_targets_ind[0]):])
+        else:
+            if len(self.hidden_objects_ind) == 1:  # 1 hidden object
                 enc_obs = (obs_obs_forward[: self.hidden_objects_ind[0]]
                            + enc_feature[: self.num_hidden_objects]
-                           + obs_obs_forward[self.hidden_objects_ind[0]:
-                                             (self.num_obs_objects + self.hidden_targets_ind[0])]
-                           + enc_feature[self.num_hidden_objects:]
-                           + obs_obs_forward[(self.num_obs_objects + self.hidden_targets_ind[0]):])
-            else:
-                if len(self.hidden_objects_ind) == 1:  # 1 hidden object
-                    enc_obs = (obs_obs_forward[: self.hidden_objects_ind[0]]
-                               + enc_feature[: self.num_hidden_objects]
-                               + obs_obs_forward[self.hidden_objects_ind[0]:])
-                elif len(self.hidden_objects_ind) == 2:  # 2 hidden objects
-                    enc_obs = (obs_obs_forward[: self.hidden_objects_ind[0]]
-                               + enc_feature[: 1]
-                               + obs_obs_forward[self.hidden_objects_ind[0]: self.hidden_objects_ind[1] - 1]
-                               + enc_feature[1:]
-                               + obs_obs_forward[self.hidden_objects_ind[1] - 1:])
-            # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
-            enc_obs_obj, enc_obs_target = enc_obs[: self.num_objects], enc_obs[self.num_objects:]
-            # return enc_dist, enc_feature, enc_obs_obj, enc_obs_target, hoa_llh
-            return enc_dist, enc_feature, enc_obs_obj, enc_obs_target, None
+                           + obs_obs_forward[self.hidden_objects_ind[0]:])
+            elif len(self.hidden_objects_ind) == 2:  # 2 hidden objects
+                enc_obs = (obs_obs_forward[: self.hidden_objects_ind[0]]
+                           + enc_feature[: 1]
+                           + obs_obs_forward[self.hidden_objects_ind[0]: self.hidden_objects_ind[1] - 1]
+                           + enc_feature[1:]
+                           + obs_obs_forward[self.hidden_objects_ind[1] - 1:])
+        # enc_obs_obj/enc_obs_target: [(bs, (n_pred_step), num_colors)] * num_objects
+        enc_obs_obj, enc_obs_target = enc_obs[: self.num_objects], enc_obs[self.num_objects:]
+        return enc_obs_obj, enc_obs_target
 
 
 def obs_encoder(params):

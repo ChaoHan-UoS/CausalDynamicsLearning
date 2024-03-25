@@ -268,6 +268,19 @@
 #         self.layers = []
 #         for i in range(1, len(dims)):
 #             self.layers.append(nn.Linear(dims[i-1], dims[i]))
+#
+#             # # Uniform initialization for weights, adjusted range
+#             # input_dim = dims[i - 1]
+#             # # Adjust these bounds based on your specific needs and activation functions
+#             # bound = torch.sqrt(torch.tensor(3.0 / input_dim))
+#             # nn.init.uniform_(self.layers[-1].weight, -bound, bound)
+#             # # Uniform initialization for biases, can be narrower than weights
+#             # nn.init.uniform_(self.layers[-1].bias, -bound, bound)
+#
+#             # # He initialization for weights
+#             # nn.init.kaiming_normal_(self.layers[-1].weight, mode='fan_in', nonlinearity='relu')
+#             # # Initialize biases to 0
+#             # nn.init.constant_(self.layers[-1].bias, 0)
 #             torch.nn.init.orthogonal_(self.layers[-1].weight.data, 3.0)
 #             torch.nn.init.uniform_(self.layers[-1].bias.data, -0.2, +0.2)
 #         self.layers = nn.ModuleList(self.layers)
@@ -1064,8 +1077,9 @@ class Chemical(gym.Env):
             self.match_type = list(range(self.num_objects))
 
         self.partial_obs_keys = params.obs_keys
-        self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)
-                                 if i not in chemical_env_params.hidden_objects_ind]
+        # self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)
+        #                          if i not in chemical_env_params.hidden_objects_ind]
+        self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)]
         self.action_dim = len(self.partial_act_dims)
 
         self.set_graph(chemical_env_params.g)

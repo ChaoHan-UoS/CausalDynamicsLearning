@@ -38,10 +38,23 @@ def forward_network(input, weights, biases, activation=F.relu, dropout=nn.Dropou
         # b (p_bs, 1, out_dim)
         x = torch.bmm(x, w) + b  # (p_bs, bs, out_dim)
         if i < len(weights) - 1 and activation:
-            x = F.layer_norm(x, normalized_shape=(x.shape[-1],))
+            # x = F.layer_norm(x, normalized_shape=(x.shape[-1],))
             x = activation(x)
             x = dropout(x)
     return x
+
+
+def forward_network_comm(input, weights, biases, feature_dim):
+    """
+    given an input and a one-layer network, apply the network to the input, and return an output
+    """
+    weights = weights.unsqueeze(dim=0).expand(feature_dim, -1, -1)
+    biases = biases.unsqueeze(dim=0).expand(feature_dim, -1, -1)
+    # input (feature_dim, bs, in_dim)
+    # weights (feature_dim, in_dim, out_dim)
+    # biases (feature_dim, 1, out_dim)
+    output = torch.bmm(input, weights) + biases
+    return output
 
 
 def forward_network_batch(inputs, weights, biases, activation=F.relu, dropout=nn.Dropout(p=0)):
@@ -56,7 +69,24 @@ def forward_network_batch(inputs, weights, biases, activation=F.relu, dropout=nn
         # b (p_bs, 1, out_dim)
         x_i = torch.bmm(x_i, w) + b  # (p_bs, bs, out_dim)
         if activation:
-            x_i = F.layer_norm(x_i, normalized_shape=(x_i.shape[-1],))
+            # x_i = F.layer_norm(x_i, normalized_shape=(x_i.shape[-1],))
+            x_i = activation(x_i)
+            x_i = dropout(x_i)
+        x.append(x_i)
+    return x
+
+
+def forward_network_batch_comm(inputs, weights, biases, activation=F.relu, dropout=nn.Dropout(p=0)):
+    """
+    given a list of inputs and a ONE-LAYER network, apply the network to each input, and return a list
+    """
+    x = []
+    for x_i in inputs:
+        # x_i (1, bs, in_dim),
+        # w (1, in_dim, out_dim)
+        # b (1, 1, out_dim)
+        x_i = torch.bmm(x_i, weights) + biases  # (1, bs, out_dim)
+        if activation:
             x_i = activation(x_i)
             x_i = dropout(x_i)
         x.append(x_i)
