@@ -29,11 +29,6 @@ class InferenceCMI(Inference):
 
         self.update_num = 0
 
-        # print('\nTrainable parameters within InferenceCMI class')
-        # for name, value in self.named_parameters():
-        #     print(name, value.shape)
-        # sys.exit()
-
     def init_model(self, encoder):
         params = self.params
         cmi_params = self.cmi_params
@@ -857,25 +852,20 @@ class InferenceCMI(Inference):
         bs = actions.size(0)
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
+        # obs_feature: [(bs, num_colors)] * (num_dset_observables * (stack_num - 1)); obs_action: (bs, action_dim)
+        obs_feature, obs_action = self.encoder.preprocess_obs(obs)
         # hidden_dist/hidden_feature: [(bs, num_colors)] * num_hidden_objects
+        hidden_dist, hidden_feature, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask_dset)
         # feature/feature_target: [(bs, num_colors)] * num_objects
-        hidden_dist, hidden_feature, feature, feature_target, hoa_llh = self.encoder(obs, mask_dset)
+        feature, feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(obs), hidden_feature)
+
+        next_obs_feature, next_obs_action = self.encoder.preprocess_obs(next_obses)
         # next_hidden_dist/next_hidden_feature: [(bs, n_pred_step, num_colors)] * num_hidden_objects
+        next_hidden_dist, next_hidden_feature, next_hoa_llh = self.encoder(
+            next_obses, next_obs_feature, next_obs_action, mask_dset)
         # next_feature/next_feature_target: [(bs, n_pred_step, num_colors)] * num_objects
-        next_hidden_dist, next_hidden_feature, next_feature, next_feature_target, next_hoa_llh = (
-            self.encoder(next_obses, mask_dset))
-
-        # # (bs, num_hidden_objects)
-        # h_llh_features = torch.exp(self.log_prob_from_distribution(hidden_dist, hidden_feature))
-        # # (bs, )
-        # h_llh = torch.prod(h_llh_features, dim=1)
-
-        # # Transition of features
-        # # pred_next_feature: softmax samples from pred_next_dist
-        # pred_next_dist, pred_next_feature =\
-        #     self.forward_with_feature(feature, actions, mask, forward_mode=forward_mode)
-        # # [(bs, n_pred_step, num_colors)] * num_hidden_objects
-        # pred_next_feature_ = [pred_next_feature[0][i] for i in self.encoder.hidden_objects_ind]
+        next_feature, next_feature_target = self.encoder.concat_oh(
+            self.encoder.feedforward_net(next_obses), next_hidden_feature)
 
         masked_pred_losses = []
         for i in range(self.feature_dim + 1):
@@ -911,19 +901,23 @@ class InferenceCMI(Inference):
             # pred_next_dist = pred_next_dist[:2]
             pred_loss = full_pred_loss + masked_pred_losses
 
-        # # (bs, n_pred_step, num_objects)
-        # o_llh_features = torch.exp(self.log_prob_from_distribution(pred_next_dists[0], pred_next_features[0]))
-        # # (bs, num_observables)
-        # o_llh_observables = o_llh_features.squeeze(dim=1)[:, self.obs_objects_ind]
-        # # (bs, )
-        # o_llh = torch.prod(o_llh_observables, dim=1)
-        # z = 1e5 * torch.mean(torch.abs(o_llh * hoa_llh - h_llh * oao_llh))
-        # z = torch.mean(torch.abs(o_llh - h_llh))
-        # pred_loss += z
-        # loss_detail["z"] = z
+        if oao_llh is not None:
+            # (bs, num_hidden_objects)
+            h_llh_features = torch.exp(self.log_prob_from_distribution(hidden_dist, hidden_feature))
+            # (bs, )
+            h_llh = torch.prod(h_llh_features, dim=1)
 
-        # # Transition loss for positive features
-        # pred_loss, loss_detail = self.prediction_loss_from_multi_dist(pred_next_dist, next_feature)
+            # (bs, n_pred_step, num_objects)
+            o_llh_features = torch.exp(self.log_prob_from_distribution(pred_next_dists[0], pred_next_features[0]))
+            # (bs, num_observables)
+            o_llh_observables = o_llh_features.squeeze(dim=1)[:, self.obs_objects_ind]
+            # (bs, )
+            o_llh = torch.prod(o_llh_observables, dim=1)
+
+            z = 1e3 * torch.mean(torch.abs(o_llh * hoa_llh - h_llh * oao_llh))
+            # z = torch.mean(torch.abs(o_llh - h_llh))
+            # pred_loss += z
+            loss_detail["z"] = z
 
         # Reconstructed reward loss
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
@@ -985,9 +979,16 @@ class InferenceCMI(Inference):
         eval_details = {}
         masked_pred_losses = []
         with torch.no_grad():
-            hidden_dist, hidden_feature, feature, feature_target, hoa_llh = self.encoder(obs, mask_dset)
-            next_hidden_dist, next_hidden_feature, next_feature, next_feature_target, next_hoa_llh = (
-                self.encoder(next_obses, mask_dset))
+            obs_feature, obs_action = self.encoder.preprocess_obs(obs)
+            hidden_dist, hidden_feature, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask_dset)
+            feature, feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(obs), hidden_feature)
+
+            next_obs_feature, next_obs_action = self.encoder.preprocess_obs(next_obses)
+            next_hidden_dist, next_hidden_feature, next_hoa_llh = self.encoder(
+                next_obses, next_obs_feature, next_obs_action, mask_dset)
+            next_feature, next_feature_target = self.encoder.concat_oh(
+                self.encoder.feedforward_net(next_obses), next_hidden_feature)
+
             for i in range(feature_dim + 1):
                 mask = self.get_eval_mask(bs, i)                         # (bs, feature_dim, feature_dim + 1)
                 if i == 0:

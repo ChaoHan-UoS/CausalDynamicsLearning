@@ -130,9 +130,9 @@ def train(params):
     # mask_dset = torch.tensor([0., 1.,
     #                           0., 1.,
     #                           1.])  # ["obj2"]
-    # mask_dset = torch.tensor([0., 1., 0., 0.,
-    #                           0., 1., 0., 0.,
-    #                           1.])  # ["obj2"]
+    mask_dset = torch.tensor([0., 1., 0., 0.,
+                              0., 1., 0., 0.,
+                              1.])  # ["obj2"]
     # mask_dset = torch.tensor([1., 1., 1., 1.,
     #                           1., 1., 1., 1.,
     #                           1.])  # ["obj2"]
@@ -142,9 +142,9 @@ def train(params):
     #                           [0., 0., 1., 0., 0., 0., 0., 0.,
     #                            0., 0., 1., 0., 0., 0., 0., 0.,
     #                            1.]])  # ["obj2", "obj4"]
-    mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
-                              0., 1., 0., 0., 0., 0., 0., 0., 0.,
-                              1.])  # ["obj2"]
+    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
+    #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
+    #                           1.])  # ["obj2"]
     # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
     #                           0., 1., 0., 0., 0., 0., 0.,
     #                           1.])  # ["obj2"]
@@ -401,21 +401,22 @@ def train(params):
                 obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
                     sample_process(batch_data, params)
 
-                # oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
-                # oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
-                # oao_llh = count2prob_llh(oao_probs, oao_batch).to(params.device)
-
-                # loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                #                                rew_batch, next_rews_batch, mask_dset, oao_llh)
-                loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                                               rew_batch, next_rews_batch, mask_dset)
+                if count_env_transition:
+                    oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
+                    oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
+                    oao_llh = count2prob_llh(oao_probs, oao_batch).to(params.device)
+                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
+                                                   rew_batch, next_rews_batch, mask_dset, oao_llh)
+                else:
+                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
+                                                   rew_batch, next_rews_batch, mask_dset)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
 
-                '''
-                if (step + 1) % training_params.plot_prob_freq == 0 or step == training_params.init_steps:
+                if (((step + 1) % training_params.plot_prob_freq == 0 or step == training_params.init_steps)
+                        and count_env_transition):
                     oao_probs = list(oao_probs.values())
                     len_oao = len(oao_probs)
                     print(f'Number of oao probs: {len_oao}')
@@ -424,26 +425,25 @@ def train(params):
                     len_hoa = len(hoa_probs)
                     print(f'Number of hoa probs: {len_hoa}')
 
-                    # fig, axs = plt.subplots(2, 1, figsize=(8, 6))
-                    #
-                    # # Plotting the oao probability distribution
-                    # axs[0].bar(range(len_oao), oao_probs, color='blue')
-                    # axs[0].set_title(f'oao probs with {len_oao} probs')
-                    # axs[0].set_xlabel('oao')
-                    # axs[0].set_ylabel('oao_probs')
-                    #
-                    # # Plotting the second probability distribution
-                    # axs[1].bar(range(len_hoa), hoa_probs, color='green')
-                    # axs[1].set_title(f'hoa probs with {len_hoa} probs')
-                    # axs[1].set_xlabel('hoa')
-                    # axs[1].set_ylabel('hoa_probs')
-                    #
-                    # plt.tight_layout()
-                    # filename = os.path.join(plot_dir, f"probs_step_{step + 1}.png")
-                    # plt.savefig(filename)
-                    # plt.clf()
+                    fig, axs = plt.subplots(2, 1, figsize=(8, 6))
+
+                    # Plotting the oao probability distribution
+                    axs[0].bar(range(len_oao), oao_probs, color='blue')
+                    axs[0].set_title(f'oao probs with {len_oao} probs')
+                    axs[0].set_xlabel('oao')
+                    axs[0].set_ylabel('oao_probs')
+
+                    # Plotting the second probability distribution
+                    axs[1].bar(range(len_hoa), hoa_probs, color='green')
+                    axs[1].set_title(f'hoa probs with {len_hoa} probs')
+                    axs[1].set_xlabel('hoa')
+                    axs[1].set_ylabel('hoa_probs')
+
+                    plt.tight_layout()
+                    filename = os.path.join(plot_dir, f"probs_step_{step + 1}.png")
+                    plt.savefig(filename)
+                    plt.clf()
                     # sys.exit()
-                '''
 
             inference.eval()
             encoder.eval()

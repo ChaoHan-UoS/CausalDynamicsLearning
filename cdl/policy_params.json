@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4", "obj5", "obj6", "obj7", "obj8", "obj9"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4", "target_obj5", "target_obj6", "target_obj7", "target_obj8", "target_obj9"],
+    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
     "seed": 5,
     "cuda_id": 0,
     "env_params": {
@@ -36,10 +36,10 @@
         },
         "chemical_env_params": {
             "hidden_objects_ind": [1],
-            "keys_dset_0": ["obj0", "obj2", "obj3", "obj4", "obj5", "obj6", "obj7", "obj8", "obj9"],
+            "keys_dset_0": ["obj0", "obj2", "obj3", "obj4"],
             "hidden_targets_ind": [],
-            "num_objects": 10,
-            "num_colors": 10,
+            "num_objects": 5,
+            "num_colors": 5,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -52,7 +52,7 @@
             "use_cuda": false,
             "max_steps": 10,
             "num_target_interventions": 3,
-            "g": "chain10",
+            "g": "chain5",
             "match_type": "all",
             "dense_reward": true
         }
@@ -65,7 +65,7 @@
         "load_policy": "",
         "load_replay_buffer": "",
         "total_steps": 2000000,
-        "init_steps": 1000000,
+        "init_steps": 10000,
         "collect_env_step": true,
         "count_env_transition": false,
         "plot_prob_freq": 1000,
