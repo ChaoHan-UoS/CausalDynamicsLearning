@@ -805,7 +805,7 @@ class ForwardEncoder(nn.Module):
             hoa_llh = None
         return enc_dist, enc_feature, hoa_llh
 
-    def concat_oh(self, obs_obs_forward, enc_feature):
+    def concat_oh(self, obs_obs_forward, enc_feature=None):
         """
         concatenate outputs of FNN and masked MLP
         :param obs_obs_forward: [(bs, (n_pred_step), num_colors)] * num_observables

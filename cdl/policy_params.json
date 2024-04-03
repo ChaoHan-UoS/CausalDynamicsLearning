@@ -35,8 +35,8 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
-            "keys_dset_0": ["obj0", "obj2", "obj3", "obj4"],
+            "hidden_objects_ind": [3],
+            "keys_dset_0": ["obj0", "obj1", "obj2", "obj4"],
             "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 5,
@@ -65,7 +65,7 @@
         "load_policy": "",
         "load_replay_buffer": "",
         "total_steps": 2000000,
-        "init_steps": 10000,
+        "init_steps": 50000,
         "collect_env_step": true,
         "count_env_transition": false,
         "plot_prob_freq": 1000,
@@ -97,9 +97,10 @@
             "feature_fc_dims": [64, 64],
             "generative_fc_dims": [64, 64],
             "dropout": 0,
-            "gumbel_temp_0": 10,
-            "gumbel_temp_ss": 1,
-            "gumbel_temp_decay_rate": 0.99,
+            "gumbel_temp_0": 3,
+            "gumbel_temp_ss": 0.3,
+            "anneal_steps": 500,
+            "anneal_rate": 0.00005,
             "dset_eval_freq": 10000000
           }
     },
@@ -112,7 +113,7 @@
          }
     },
     "inference_params": {
-        "pre_train_steps": 2000,
+        "pre_train_steps": 0,
         "transition_train_steps": 1000,
         "n_pred_step": 1,
         "batch_size": 128,

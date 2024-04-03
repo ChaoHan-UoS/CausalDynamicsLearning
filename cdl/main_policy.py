@@ -130,8 +130,8 @@ def train(params):
     # mask_dset = torch.tensor([0., 1.,
     #                           0., 1.,
     #                           1.])  # ["obj2"]
-    mask_dset = torch.tensor([0., 1., 0., 0.,
-                              0., 1., 0., 0.,
+    mask_dset = torch.tensor([0., 0., 0., 1.,
+                              0., 0., 0., 1.,
                               1.])  # ["obj2"]
     # mask_dset = torch.tensor([1., 1., 1., 1.,
     #                           1., 1., 1., 1.,
@@ -238,7 +238,11 @@ def train(params):
     encoder_train_steps = encoder_params.encoder_train_steps
     train_steps = encoder_train_steps + transition_train_steps
     eval_tau = cmi_params.eval_tau_0
-    ss_flag = True
+    ss_flag = False
+    gumbel_temp_0 = feedforward_enc_params.gumbel_temp_0
+    gumbel_temp_ss = feedforward_enc_params.gumbel_temp_ss
+    anneal_steps = feedforward_enc_params.anneal_steps
+    anneal_rate = feedforward_enc_params.anneal_rate
 
     # save plots
     plot_dir = os.path.join(params.rslts_dir, "plots")
@@ -467,7 +471,7 @@ def train(params):
                         print("mask_CMI", inference.mask_CMI)
                         print("mask", inference.mask)
 
-                        if eval_pred_loss["eval_pred_loss"] < 0.015 and ss_flag:
+                        if eval_pred_loss["eval_pred_kl_h"] < 0.005 and ss_flag:
                             # if eval_pred_loss["next_pred_enco_hidden_acc"] == 1 and ss_flag:
                             eval_tau = cmi_params.eval_tau_ss
                             encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_ss
@@ -509,14 +513,16 @@ def train(params):
                 print("mask_dset:", mask_dset)
 
             # inference.scheduler.step()
-            '''
-            if (step + 1 - training_params.init_steps) % 500 == 0:
-                encoder.gumbel_temp *= feedforward_enc_params.gumbel_temp_decay_rate
+            # anneal the temperature
+            if (step + 1 - training_params.init_steps) % anneal_steps == 0:
+                anneal_curr_step = step + 1 - training_params.init_steps
+                encoder.gumbel_temp = np.maximum(gumbel_temp_0 * np.exp(-anneal_rate * anneal_curr_step),
+                                                 gumbel_temp_ss)
+                # encoder.gumbel_temp *= feedforward_enc_params.gumbel_temp_decay_rate
                 print("gumbel_temperature", encoder.gumbel_temp)
             
             if (step + 1 - training_params.init_steps) % 10000 == 0:
                 print("buffer_train_len", len(buffer_train))
-            '''
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()

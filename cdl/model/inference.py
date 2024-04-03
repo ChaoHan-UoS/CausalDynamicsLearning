@@ -176,13 +176,14 @@ class Inference(nn.Module):
         calculate log_prob of value from the distribution
         :param dist:
             if state space is continuous: Normal distribution of shape (bs, feature_dim).
-            else: [OneHotCategorical / Normal]  * feature_dim, each of shape (bs, feature_i_dim)
+            else: [OneHotCategorical / Normal] * feature_dim, each of shape (bs, feature_i_dim)
             notice that bs can be a multi-dimensional batch size
         :param value:
             if state space is continuous: (bs, feature_dim).
             else: [(bs, feature_i_dim)]  * feature_dim
-            # feature_i_dim is expected to be a one-hot value (Expected value argument of .log_prob(value) to be within
-            # the support (OneHot()) of the distribution OneHotCategorical())
+            feature_i_dim is expected to be a one-hot value
+            (Expected value argument of .log_prob(value) to be within the support OneHot()
+            of the distribution OneHotCategorical())
         :return: (bs, feature_dim)
         """
         if self.continuous_state:
