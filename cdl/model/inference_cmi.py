@@ -785,11 +785,12 @@ class InferenceCMI(Inference):
 
         return pred_loss, pred_loss_detail
 
-    def backprop(self, pred_loss, rec_losses, loss_detail):
+    def backprop(self, pred_loss_o, pred_loss_h, rec_losses, loss_detail):
         pre_train_steps = self.inference_params.pre_train_steps
         transition_train_steps = self.inference_params.transition_train_steps
         encoder_train_steps = self.params.encoder_params.encoder_train_steps
         train_steps = encoder_train_steps + transition_train_steps
+        pred_o_steps = self.inference_params.pred_o_steps
 
         if self.update_num <= pre_train_steps:
             loss = rec_losses
@@ -805,7 +806,11 @@ class InferenceCMI(Inference):
             #     parameters = self.parameters_encoder + self.parameters_decoder
             # optimizer = self.optimizer
             # parameters = self.parameters()
-            loss = pred_loss
+            # loss = pred_loss + rec_losses
+            if (self.update_num - pre_train_steps) <= pred_o_steps:
+                loss = pred_loss_o
+            else:
+                loss = pred_loss_o + pred_loss_h
             optimizer = self.optimizer
             parameters = self.parameters()
 
@@ -955,6 +960,9 @@ class InferenceCMI(Inference):
         masked_pred_kl_h = torch.stack(masked_pred_kl_h_, dim=-1).sum(dim=(-2, -1)).mean()
         masked_pred_nll_o = torch.stack(masked_pred_nll_o_, dim=-1).sum(dim=(-2, -1)).mean()
 
+        # full_pred_kl_h *= 1e5
+        # causal_pred_kl_h *= 1e5
+        # masked_pred_kl_h *= 1e5
         pred_kl_h = full_pred_kl_h + causal_pred_kl_h + masked_pred_kl_h
         pred_nll_o = full_pred_nll_o + causal_pred_nll_o + masked_pred_nll_o
 
@@ -963,19 +971,14 @@ class InferenceCMI(Inference):
             pred_kl_h = full_pred_kl_h + causal_pred_kl_h
             pred_nll_o = full_pred_nll_o + causal_pred_nll_o
 
-        full_pred_kl_h *= 1e5
-        causal_pred_kl_h *= 1e5
-        masked_pred_kl_h *= 1e5
-        # nelbo = pred_nll_o + pred_kl_h - ent_h
-        nelbo = pred_nll_o
+        pred_loss_o = pred_nll_o - ent_h
         loss_detail = {"full_pred_kl_h": full_pred_kl_h,
                        "causal_pred_kl_h": causal_pred_kl_h,
                        "masked_pred_kl_h": masked_pred_kl_h,
                        "full_pred_nll_o": full_pred_nll_o,
                        "causal_pred_nll_o": causal_pred_nll_o,
                        "masked_pred_nll_o": masked_pred_nll_o,
-                       "ent_h": ent_h,
-                       "nelbo": nelbo}
+                       "ent_h": ent_h}
 
         if oao_llh is not None:
             # (bs, num_hidden_objects)
@@ -1011,19 +1014,19 @@ class InferenceCMI(Inference):
 
         rec_loss *= 10
         next_rec_loss *= 10
-        rec_losses = rec_loss + next_rec_loss
+        rec_losses = rec_loss
         rec_loss_detail["rec_loss"] = rec_loss
         next_rec_loss_detail["next_rec_loss"] = next_rec_loss
         # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail, **rec_pred_loss_detail}
         # loss_detail = {**rec_loss_detail}
         loss_detail = {**loss_detail}
-        # loss_detail = {**loss_detail, **rec_loss_detail, **next_rec_loss_detail}
+        # loss_detail = {**loss_detail, **rec_loss_detail}
 
         # if not eval and torch.isfinite(loss):
         #     self.backprop(loss, loss_detail)
 
         if not eval:
-            self.backprop(nelbo, rec_losses, loss_detail)
+            self.backprop(pred_loss_o, pred_kl_h, rec_losses, loss_detail)
 
         return loss_detail
 
@@ -1186,11 +1189,10 @@ class InferenceCMI(Inference):
             # (bs, num_hidden_objects, feature_dim + 1, num_colors)
             masked_pred_prob_h_ = torch.stack(masked_pred_prob_h_, dim=3).mean(dim=1)
             # summed over num_colors for KL as CMI for the hidden; (bs, num_hidden_objects, feature_dim + 1)
-            CMI_h = torch.sum(full_pred_prob_h * torch.log(full_pred_prob_h / masked_pred_prob_h_ + 1e-20),
-                                  dim=-1)
+            CMI_h = torch.sum(full_pred_prob_h * torch.log(full_pred_prob_h / masked_pred_prob_h_ + 1e-20), dim=-1)
             CMI_h = CMI_h.mean(dim=0)  # (num_hidden_objects, feature_dim + 1)
-
-            CMI = torch.cat([CMI_h, CMI_o], dim=0)  # (feature_dim, feature_dim + 1)
+            CMI = torch.cat((CMI_o[: self.hidden_objects_ind[0]], CMI_h, CMI_o[self.hidden_objects_ind[-1]:]),
+                            dim=0)  # (feature_dim, feature_dim + 1)
         else:
             CMI = CMI_o  # (feature_dim, feature_dim + 1)
 

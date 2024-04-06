@@ -97,7 +97,7 @@
             "feature_fc_dims": [64, 64],
             "generative_fc_dims": [64, 64],
             "dropout": 0,
-            "gumbel_temp_0": 3,
+            "gumbel_temp_0": 1,
             "gumbel_temp_ss": 0.3,
             "anneal_steps": 500,
             "anneal_rate": 0.00005,
@@ -115,6 +115,7 @@
     "inference_params": {
         "pre_train_steps": 0,
         "transition_train_steps": 1000,
+        "pred_o_steps": 0,
         "n_pred_step": 1,
         "batch_size": 128,
         "lr_0": 1e-3,

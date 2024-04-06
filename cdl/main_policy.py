@@ -130,12 +130,12 @@ def train(params):
     # mask_dset = torch.tensor([0., 1.,
     #                           0., 1.,
     #                           1.])  # ["obj2"]
-    mask_dset = torch.tensor([0., 0., 0., 1.,
-                              0., 0., 0., 1.,
-                              1.])  # ["obj2"]
-    # mask_dset = torch.tensor([1., 1., 1., 1.,
-    #                           1., 1., 1., 1.,
+    # mask_dset = torch.tensor([0., 0., 0., 1.,
+    #                           0., 0., 0., 1.,
     #                           1.])  # ["obj2"]
+    mask_dset = torch.tensor([1., 1., 1., 1.,
+                              1., 1., 1., 1.,
+                              1.])  # ["obj2"]
     # mask_dset = torch.tensor([[0., 1., 0., 0., 0., 0., 0., 0.,
     #                            0., 1., 0., 0., 0., 0., 0., 0.,
     #                            1.],
