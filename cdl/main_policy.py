@@ -251,9 +251,9 @@ def train(params):
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
         is_pre_train = training_params.init_steps - 1 <= step < inference_params.pre_train_steps + training_params.init_steps
-        if (step + 1) % 100 == 0:
-            print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
-                                                                       is_init_stage, is_pre_train))
+        # if (step + 1) % 100 == 0:
+        print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
+                                                                   is_init_stage, is_pre_train))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}

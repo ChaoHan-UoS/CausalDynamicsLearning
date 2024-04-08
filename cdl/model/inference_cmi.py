@@ -663,6 +663,14 @@ class InferenceCMI(Inference):
         bool_mask = int_mask < 1
         return ~bool_mask
 
+    def get_enc_mask(self, bs, i, feature_dim_dset):
+        # omit i-th next observable when encoding the current hidden
+        num_hiddens = len(self.hidden_objects_ind)
+        mask_ids = torch.full((bs, num_hiddens), i, dtype=torch.int64, device=self.device)
+        int_mask = F.one_hot(mask_ids, feature_dim_dset + 1)
+        bool_mask = int_mask < 1
+        return bool_mask  # (bs, num_hidden_objects, feature_dim_dset + 1)
+
     def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature):
         """
         calculate total prediction loss for full, masked and/or causal prediction distributions
@@ -897,8 +905,6 @@ class InferenceCMI(Inference):
 
         eval_freq = self.cmi_params.eval_freq
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
-        forward_mode = ("full", "masked", "causal")
-        # forward_mode = ("full", "causal")
         bs = actions.size(0)
         mask = self.get_training_mask(bs)  # (bs, feature_dim, feature_dim + 1)
 
@@ -909,27 +915,58 @@ class InferenceCMI(Inference):
             next_feature, next_feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(next_obses))
             ent_h = torch.zeros(1)
         else:
+            num_dset_obs = self.encoder.num_dset_obs
+            feature_dim_dset = self.encoder.feature_dim_dset
+            masked_hidden_prob_ = []
             # obs_feature: [(bs, num_colors)] * (num_dset_observables * (stack_num - 1)); obs_action: (bs, action_dim)
             obs_feature, obs_action = self.encoder.preprocess_obs(obs)
-            # hidden_dist/hidden_feature: [(bs, num_colors)] * num_hidden_objects
-            hidden_dist, hidden_feature, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask_dset)
-            # feature/feature_target: [(bs, num_colors)] * num_objects
-            feature, feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(obs), hidden_feature)
+            for i in range(num_dset_obs, feature_dim_dset):
+                mask = self.get_enc_mask(bs, i, feature_dim_dset)  # (bs, num_hidden_objects, feature_dim_dset + 1)
+                if i == num_dset_obs:
+                    # hidden_dists/hidden_features: [[(bs, num_colors)] * num_hidden_objects] * 2
+                    hidden_dists, hidden_features, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask)
+                    full_hidden_dist, masked_hidden_dist = hidden_dists
+                    full_hidden_feature, masked_hidden_feature = hidden_features
+
+                    # Compute entropy of encoded hidden analytically
+                    # [(bs, num_colors)] * num_hidden_objects
+                    full_hidden_prob = [dist_i.probs for dist_i in full_hidden_dist]
+                    # (bs, num_hidden_objects, num_colors)
+                    full_hidden_prob = torch.stack(full_hidden_prob, dim=1)
+                    # summed over num_colors for entropy and num_hidden_objects, then averaged over bs
+                    ent_h = -torch.sum(full_hidden_prob * torch.log(full_hidden_prob + 1e-20), dim=-1).sum(-1).mean()
+
+                    # feature/feature_target: [(bs, num_colors)] * num_objects
+                    feature, feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(obs),
+                                                                     full_hidden_feature)
+                else:
+                    # [(bs, num_colors)] * num_hidden_objects
+                    masked_hidden_dist = self.encoder(obs, obs_feature, obs_action, mask, forward_mode=("masked",))[0]
+                # [(bs, num_colors)] * num_hidden_objects
+                masked_hidden_prob = [dist_i.probs for dist_i in masked_hidden_dist]
+                masked_hidden_prob = torch.stack(masked_hidden_prob, dim=1)
+                # [(bs, num_hidden_objects, num_colors)] * num_dset_obs
+                masked_hidden_prob_.append(masked_hidden_prob)
 
             next_obs_feature, next_obs_action = self.encoder.preprocess_obs(next_obses)
             # next_hidden_dist/next_hidden_feature: [(bs, n_pred_step, num_colors)] * num_hidden_objects
             next_hidden_dist, next_hidden_feature, next_hoa_llh = self.encoder(
-                next_obses, next_obs_feature, next_obs_action, mask_dset)
+                next_obses, next_obs_feature, next_obs_action, forward_mode=("full",))
             next_hidden_prob = [dist.probs for dist in next_hidden_dist]
             # next_feature/next_feature_target: [(bs, n_pred_step, num_colors)] * num_objects
             next_feature, next_feature_target = self.encoder.concat_oh(
                 self.encoder.feedforward_net(next_obses), next_hidden_prob)
 
-            # Compute entropy analytically
-            hidden_prob = [dist.probs for dist in hidden_dist]  # [(bs, num_colors)] * num_hidden_objects
-            hidden_prob = torch.stack(hidden_prob, dim=1)  # (bs, num_hidden_objects, num_colors)
-            # summed over num_colors for entropy and num_hidden_objects, then averaged over bs
-            ent_h = -torch.sum(hidden_prob * torch.log(hidden_prob + 1e-20), dim=-1).sum(-1).mean()
+            # Compute CMI between encoded hidden and next observable
+            # (bs, num_hidden_objects, 1, num_colors)
+            full_hidden_prob = full_hidden_prob.unsqueeze(dim=2)
+            # print("full_hidden_prob", full_hidden_prob[:10])
+            # (bs, num_hidden_objects, num_dset_obs, num_colors)
+            masked_hidden_prob_ = torch.stack(masked_hidden_prob_, dim=2)
+            # summed over num_colors for KL(I(full) || I(masked)) analytically; (bs, num_hidden_objects, num_dset_obs)
+            cmi_h = torch.sum(full_hidden_prob * torch.log(full_hidden_prob / masked_hidden_prob_ + 1e-20), dim=-1)
+            cmi_h = cmi_h.mean(dim=0).sum()
+            cmi_h *= 1e3
 
         masked_pred_kl_h_ = []
         masked_pred_nll_o_ = []
@@ -941,7 +978,7 @@ class InferenceCMI(Inference):
                 full_pred_loss, masked_pred_loss, causal_pred_loss = \
                     [self.prediction_loss_from_dist(pred_next_dist_i, next_feature)
                      for pred_next_dist_i in pred_next_dists]
-                # (bs, n_pred_step)
+                # pred_kl_h/pred_nll_o: (bs, n_pred_step)
                 full_pred_kl_h, full_pred_nll_o = full_pred_loss
                 causal_pred_kl_h, causal_pred_nll_o = causal_pred_loss
             else:
@@ -971,32 +1008,15 @@ class InferenceCMI(Inference):
             pred_kl_h = full_pred_kl_h + causal_pred_kl_h
             pred_nll_o = full_pred_nll_o + causal_pred_nll_o
 
-        pred_loss_o = pred_nll_o - ent_h
+        pred_loss_o = pred_nll_o - ent_h + cmi_h
         loss_detail = {"full_pred_kl_h": full_pred_kl_h,
                        "causal_pred_kl_h": causal_pred_kl_h,
                        "masked_pred_kl_h": masked_pred_kl_h,
                        "full_pred_nll_o": full_pred_nll_o,
                        "causal_pred_nll_o": causal_pred_nll_o,
                        "masked_pred_nll_o": masked_pred_nll_o,
-                       "ent_h": ent_h}
-
-        if oao_llh is not None:
-            # (bs, num_hidden_objects)
-            h_llh_features = torch.exp(self.log_prob_from_distribution(hidden_dist, hidden_feature))
-            # (bs, )
-            h_llh = torch.prod(h_llh_features, dim=1)
-
-            # (bs, n_pred_step, num_objects)
-            o_llh_features = torch.exp(self.log_prob_from_distribution(pred_next_dists[0], pred_next_features[0]))
-            # (bs, num_observables)
-            o_llh_observables = o_llh_features.squeeze(dim=1)[:, self.obs_objects_ind]
-            # (bs, )
-            o_llh = torch.prod(o_llh_observables, dim=1)
-
-            z = 1e3 * torch.mean(torch.abs(o_llh * hoa_llh - h_llh * oao_llh))
-            # z = torch.mean(torch.abs(o_llh - h_llh))
-            # pred_loss += z
-            loss_detail["z"] = z
+                       "ent_h": ent_h,
+                       "cmi_h": cmi_h}
 
         # Reconstructed reward loss
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
@@ -1060,12 +1080,13 @@ class InferenceCMI(Inference):
                 next_feature, next_feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(next_obses))
             else:
                 obs_feature, obs_action = self.encoder.preprocess_obs(obs)
-                hidden_dist, hidden_feature, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask_dset)
+                hidden_dist, hidden_feature, hoa_llh = self.encoder(obs, obs_feature, obs_action,
+                                                                    forward_mode=("full",))
                 feature, feature_target = self.encoder.concat_oh(self.encoder.feedforward_net(obs), hidden_feature)
 
                 next_obs_feature, next_obs_action = self.encoder.preprocess_obs(next_obses)
                 next_hidden_dist, next_hidden_feature, next_hoa_llh = self.encoder(
-                    next_obses, next_obs_feature, next_obs_action, mask_dset)
+                    next_obses, next_obs_feature, next_obs_action, forward_mode=("full",))
                 next_hidden_prob = [dist.probs for dist in next_hidden_dist]
                 next_feature, next_feature_target = self.encoder.concat_oh(
                     self.encoder.feedforward_net(next_obses), next_hidden_prob)

@@ -769,26 +769,21 @@ class ForwardEncoder(nn.Module):
         obs_obs_forward = list(torch.unbind(obs_obs_forward[:, :, -2]))
         return obs_obs_forward
 
-    def forward(self, obs, feature, action, mask_dset):
+    def forward(self, obs, feature, action, mask=None, forward_mode=("full", "masked")):
         """
         masked MLP fed by d-set
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
         :param feature: [[(bs, num_colors)] * (num_dset_observables * (stack_num - 1))] * n_pred_step or
                          [(bs, num_colors)] * (num_dset_observables * (stack_num - 1))
         :param action: [(bs, action_dim)] * n_pred_step or (bs, action_dim)
-        :param mask_dset: (num_hidden_objects, feature_dim_dset + 1)
+        :param mask: (bs, num_hidden_objects, feature_dim_dset + 1)
         the second dim represents binary d-sets at t, t+1 and binary action at t
+        :param forward_mode
         :return enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
                 hoa_llh: (bs, ) likelihoods of (hidden, obs, action)
         """
         bs = len(obs[next(iter(dict(obs)))])
         oa_batch = obs_batch_dict2tuple(obs, self.params)[0]
-
-        forward_mode = ("masked",)
-        # (bs, num_hidden_objects, feature_dim_dset + 1)
-        mask = torch.ones(bs, self.num_hidden_objects, self.feature_dim_dset + 1, dtype=torch.bool,
-                          device=self.device)
-        mask[:] = mask_dset.bool()  # broadcast along bs
 
         # enc_dist/enc_feature: [(bs, (n_pred_step), num_colors)] * num_hidden_objects
         enc_dist, enc_feature = self.forward_with_feature(feature, action, mask, forward_mode=forward_mode)
