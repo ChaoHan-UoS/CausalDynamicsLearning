@@ -872,7 +872,8 @@ class InferenceCMI(Inference):
             # (bs, n_pred_step, num_hidden_objects, num_colors)
             next_prob_h = torch.stack(next_prob_h, dim=2)
             # summed over num_colors for KL; (bs, n_pred_step, num_hidden_objects)
-            kl_pred_h = torch.sum(next_prob_h * torch.log(next_prob_h / pred_prob_h + 1e-20), dim=-1)
+            kl_pred_h = torch.sum(next_prob_h * (torch.log(next_prob_h + 1e-20) -
+                                                 torch.log(pred_prob_h + 1e-20)), dim=-1)
         else:
             kl_pred_h = torch.zeros(128, 1, 1)
 
@@ -918,11 +919,13 @@ class InferenceCMI(Inference):
             num_dset_obs = self.encoder.num_dset_obs
             feature_dim_dset = self.encoder.feature_dim_dset
             masked_hidden_prob_ = []
+            feature_masked_ = []
             # obs_feature: [(bs, num_colors)] * (num_dset_observables * (stack_num - 1)); obs_action: (bs, action_dim)
             obs_feature, obs_action = self.encoder.preprocess_obs(obs)
-            for i in range(num_dset_obs, feature_dim_dset):
+            idxes = [i for i in range(num_dset_obs)] + [feature_dim_dset]
+            for i in idxes:
                 mask = self.get_enc_mask(bs, i, feature_dim_dset)  # (bs, num_hidden_objects, feature_dim_dset + 1)
-                if i == num_dset_obs:
+                if i == 0:
                     # hidden_dists/hidden_features: [[(bs, num_colors)] * num_hidden_objects] * 2
                     hidden_dists, hidden_features, hoa_llh = self.encoder(obs, obs_feature, obs_action, mask)
                     full_hidden_dist, masked_hidden_dist = hidden_dists
@@ -941,12 +944,17 @@ class InferenceCMI(Inference):
                                                                      full_hidden_feature)
                 else:
                     # [(bs, num_colors)] * num_hidden_objects
-                    masked_hidden_dist = self.encoder(obs, obs_feature, obs_action, mask, forward_mode=("masked",))[0]
+                    masked_hidden_dist, masked_hidden_feature, _ = self.encoder(obs, obs_feature, obs_action,
+                                                                                mask, forward_mode=("masked",))
                 # [(bs, num_colors)] * num_hidden_objects
                 masked_hidden_prob = [dist_i.probs for dist_i in masked_hidden_dist]
                 masked_hidden_prob = torch.stack(masked_hidden_prob, dim=1)
-                # [(bs, num_hidden_objects, num_colors)] * num_dset_obs
+                # [(bs, num_hidden_objects, num_colors)] * (feature_dim_dset + 1)
                 masked_hidden_prob_.append(masked_hidden_prob)
+
+                feature_masked = self.encoder.concat_oh(self.encoder.feedforward_net(obs), masked_hidden_feature)[0]
+                # [[(bs, num_colors)] * num_objects] * (feature_dim_dset + 1)
+                feature_masked_.append(feature_masked)
 
             next_obs_feature, next_obs_action = self.encoder.preprocess_obs(next_obses)
             # next_hidden_dist/next_hidden_feature: [(bs, n_pred_step, num_colors)] * num_hidden_objects
@@ -957,22 +965,34 @@ class InferenceCMI(Inference):
             next_feature, next_feature_target = self.encoder.concat_oh(
                 self.encoder.feedforward_net(next_obses), next_hidden_prob)
 
-            # Compute CMI between encoded hidden and next observable
+            # Compute CMI between hidden and encoder inputs
             # (bs, num_hidden_objects, 1, num_colors)
             full_hidden_prob = full_hidden_prob.unsqueeze(dim=2)
             # print("full_hidden_prob", full_hidden_prob[:10])
-            # (bs, num_hidden_objects, num_dset_obs, num_colors)
+            # (bs, num_hidden_objects, feature_dim_dset + 1, num_colors)
             masked_hidden_prob_ = torch.stack(masked_hidden_prob_, dim=2)
-            # summed over num_colors for KL(I(full) || I(masked)) analytically; (bs, num_hidden_objects, num_dset_obs)
-            cmi_h = torch.sum(full_hidden_prob * torch.log(full_hidden_prob / masked_hidden_prob_ + 1e-20), dim=-1)
+            # summed over num_colors for KL(I(full) || I(masked)) analytically
+            # (bs, num_hidden_objects, feature_dim_dset + 1)
+            cmi_h = torch.sum(full_hidden_prob * (torch.log(full_hidden_prob + 1e-20) -
+                                                  torch.log(masked_hidden_prob_ + 1e-20)), dim=-1)
             cmi_h = cmi_h.mean(dim=0).sum()
-            cmi_h *= 1e3
+            # cmi_h *= 1e3
+            cmi_h_hinge = torch.max(torch.zeros_like(cmi_h), self.cmi_params.hinge - cmi_h)
 
         masked_pred_kl_h_ = []
         masked_pred_nll_o_ = []
+        masked_pred_nll_o_from_masked_ = []
         for i in range(self.feature_dim + 1):
             mask = self.get_eval_mask(bs, i)  # (bs, feature_dim, feature_dim + 1)
             if i == 0:
+                for feature_masked in feature_masked_:
+                    pred_next_dist_from_masked = self.forward_with_feature(feature_masked, actions,
+                                                                           forward_mode=("full",))[0]
+                    masked_pred_nll_o_from_masked = self.prediction_loss_from_dist(pred_next_dist_from_masked,
+                                                                                   next_feature)[1]
+                # [(bs, n_pred_step)] * (feature_dim_dset + 1)
+                masked_pred_nll_o_from_masked_.append(masked_pred_nll_o_from_masked)
+
                 # Transition loss
                 pred_next_dists, pred_next_features = self.forward_with_feature(feature, actions, mask)
                 full_pred_loss, masked_pred_loss, causal_pred_loss = \
@@ -988,6 +1008,8 @@ class InferenceCMI(Inference):
             masked_pred_kl_h_.append(masked_pred_kl_h)  # [(bs, n_pred_step)] * (feature_dim + 1)
             masked_pred_nll_o_.append(masked_pred_nll_o)
 
+        # sum over n_pred_step and feature_dim_dset + 1, then average over bs
+        masked_pred_nll_o_from_masked = torch.stack(masked_pred_nll_o_from_masked_, dim=-1).sum(dim=(-2, -1)).mean()
         full_pred_kl_h = full_pred_kl_h.sum(dim=-1).mean()  # sum over n_pred_step, then average over bs
         full_pred_nll_o = full_pred_nll_o.sum(dim=-1).mean()
         causal_pred_kl_h = causal_pred_kl_h.sum(dim=-1).mean()
@@ -1008,7 +1030,7 @@ class InferenceCMI(Inference):
             pred_kl_h = full_pred_kl_h + causal_pred_kl_h
             pred_nll_o = full_pred_nll_o + causal_pred_nll_o
 
-        pred_loss_o = pred_nll_o - ent_h + cmi_h
+        pred_loss_o = pred_nll_o + masked_pred_nll_o_from_masked - ent_h + cmi_h_hinge
         loss_detail = {"full_pred_kl_h": full_pred_kl_h,
                        "causal_pred_kl_h": causal_pred_kl_h,
                        "masked_pred_kl_h": masked_pred_kl_h,
@@ -1016,7 +1038,9 @@ class InferenceCMI(Inference):
                        "causal_pred_nll_o": causal_pred_nll_o,
                        "masked_pred_nll_o": masked_pred_nll_o,
                        "ent_h": ent_h,
-                       "cmi_h": cmi_h}
+                       "masked_pred_nll_o_from_masked": masked_pred_nll_o_from_masked,
+                       "cmi_h": cmi_h,
+                       "cmi_h_hinge": cmi_h_hinge}
 
         # Reconstructed reward loss
         rec_loss, rec_loss_detail = self.rec_loss_from_feature(feature + feature_target, rew)
@@ -1210,7 +1234,8 @@ class InferenceCMI(Inference):
             # (bs, num_hidden_objects, feature_dim + 1, num_colors)
             masked_pred_prob_h_ = torch.stack(masked_pred_prob_h_, dim=3).mean(dim=1)
             # summed over num_colors for KL as CMI for the hidden; (bs, num_hidden_objects, feature_dim + 1)
-            CMI_h = torch.sum(full_pred_prob_h * torch.log(full_pred_prob_h / masked_pred_prob_h_ + 1e-20), dim=-1)
+            CMI_h = torch.sum(full_pred_prob_h * (torch.log(full_pred_prob_h + 1e-20) -
+                                                  torch.log(masked_pred_prob_h_ + 1e-20)), dim=-1)
             CMI_h = CMI_h.mean(dim=0)  # (num_hidden_objects, feature_dim + 1)
             CMI = torch.cat((CMI_o[: self.hidden_objects_ind[0]], CMI_h, CMI_o[self.hidden_objects_ind[-1]:]),
                             dim=0)  # (feature_dim, feature_dim + 1)
