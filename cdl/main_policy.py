@@ -3,7 +3,6 @@ import sys
 
 os.environ['JUPYTER_PLATFORM_DIRS'] = '1'
 
-from collections import Counter
 import numpy as np
 
 import torch
@@ -25,8 +24,7 @@ from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
 from model.model_based import ModelBased
 
-from model.encoder import obs_encoder
-from model.decoder import rew_decoder
+from model.encoder import Encoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
     get_start_step_from_model_loading, preprocess_obs, postprocess_obs
@@ -45,50 +43,15 @@ import matplotlib
 # matplotlib.use('TkAgg')
 
 
-def sample_process(batch_data, params):
+def sample_inference(batch_data, params):
     """
-    :return obs_batch: Batch(obs_i_key: (bs, stack_num, obs_i_shape))
-            actions_batch: (bs, n_pred_step, action_dim)
-            next_obses_batch: Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
-            rew_batch: (bs, reward_dim) or None
-            next_rews_batch: (bs, n_pred_step, reward_dim)
-            hidden_label_batch: (bs, hidden_dim)
+    :return obs_batch: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+            hidden_batch: {obs_i_key: (bs, seq_len, obs_i_shape)}
     """
-    replay_buffer_params = params.training_params.replay_buffer_params
-    inference_params = params.inference_params
-
-    batch_data = to_torch(batch_data, torch.float32, params.device)
-    # Batch(obs_i_key: (bs, stack_num, obs_i_shape))
-    obs_batch = batch_data.obs[:, :replay_buffer_params.stack_num]
-    # (bs, reward_dim)
-    # observation at t corresponds to reward at t-1
-    if replay_buffer_params.stack_num == 1:
-        rew_batch = None
-    else:
-        rew_batch = obs_batch.rew[:, -3]
-
-    # {obs_i_key: (bs, obs_i_shape)}
-    next_hidden_batch = {key: batch_data.info[key][:, replay_buffer_params.stack_num - 1]
-                         for key in params.hidden_keys}
-
-    actions_batch = []
-    next_obses_batch = []
-    next_rews_batch = []
-    for i in range(inference_params.n_pred_step):
-        actions_batch.append(batch_data.obs.act[:, i + replay_buffer_params.stack_num - 2])
-        next_obses_batch.append(batch_data.obs_next[:, i: i + replay_buffer_params.stack_num])
-        if replay_buffer_params.stack_num == 1 and i == 0:
-            next_rews_batch.append(batch_data.obs.rew[:, replay_buffer_params.stack_num - 1])
-        else:
-            next_rews_batch.append(batch_data.obs_next.rew[:, i + replay_buffer_params.stack_num - 3])
-    # (bs, n_pred_step, action_dim)
-    actions_batch = torch.stack(actions_batch, dim=-2)
-    # Batch(obs_i_key: (bs, stack_num, n_pred_step, obs_i_shape))
-    next_obses_batch = Batch.stack(next_obses_batch, axis=-2)
-    # (bs, n_pred_step, reward_dim)
-    next_rews_batch = torch.stack(next_rews_batch, dim=-2)
-
-    return obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch
+    batch_data = to_torch(batch_data, torch.float64, params.device)
+    obs_batch = batch_data.obs
+    hidden_batch = {key: batch_data.info[key] for key in params.hidden_keys}
+    return obs_batch, hidden_batch
 
 
 def train(params):
@@ -102,7 +65,7 @@ def train(params):
     policy_params = params.policy_params
     cmi_params = inference_params.cmi_params
     encoder_params = params.encoder_params
-    feedforward_enc_params = encoder_params.feedforward_enc_params
+    gumbel_softmax_params = encoder_params.gumbel_softmax_params
 
     # init environment
     chemical_env_params = params.env_params.chemical_env_params
@@ -125,37 +88,7 @@ def train(params):
 
     # init model
     update_obs_act_spec(env, params)
-    encoder = obs_encoder(params)
-    # mask_dset = torch.ones(encoder.num_hidden_objects, encoder.feature_dim_dset + 1)
-    # mask_dset = torch.tensor([0., 1.,
-    #                           0., 1.,
-    #                           1.])  # ["obj2"]
-    # mask_dset = torch.tensor([0., 0., 0., 1.,
-    #                           0., 0., 0., 1.,
-    #                           1.])  # ["obj2"]
-    mask_dset = torch.tensor([1., 1., 1., 1.,
-                              1., 1., 1., 1.,
-                              1.])  # ["obj2"]
-    # mask_dset = torch.tensor([[0., 1., 0., 0., 0., 0., 0., 0.,
-    #                            0., 1., 0., 0., 0., 0., 0., 0.,
-    #                            1.],
-    #                           [0., 0., 1., 0., 0., 0., 0., 0.,
-    #                            0., 0., 1., 0., 0., 0., 0., 0.,
-    #                            1.]])  # ["obj2", "obj4"]
-    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0., 0., 0.,
-    #                           0., 1., 0., 0., 0., 0., 0., 0., 0.,
-    #                           1.])  # ["obj2"]
-    # mask_dset = torch.tensor([0., 1., 0., 0., 0., 0., 0.,
-    #                           0., 1., 0., 0., 0., 0., 0.,
-    #                           1.])  # ["obj2"]
-    # dset_full_dim = 2 * (chemical_env_params.num_objects - len(hidden_objects_ind)) + 1
-    # mask_dset = torch.ones(dset_full_dim)
-
-    # mask_dset = torch.tensor([[1., 1., 1., 1., 1., 1., 1., 1., 1.,
-    #                            0., 0., 0., 0., 0., 0., 0., 0., 1.,
-    #                            1.]])
-
-    decoder = rew_decoder(params)
+    encoder = Encoder(params)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -171,7 +104,7 @@ def train(params):
         Inference = InferenceCMI
     else:
         raise NotImplementedError
-    inference = Inference(encoder, decoder, params)
+    inference = Inference(encoder, params)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -196,12 +129,14 @@ def train(params):
     else:
         buffer_train = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
+            stack_num=replay_buffer_params.stack_num,
+            ignore_obs_next=True,
             sample_avail=True,
         )
         buffer_eval_cmi = ReplayBuffer(
             size=replay_buffer_params.capacity,
-            stack_num=replay_buffer_params.stack_num + inference_params.n_pred_step - 1,
+            stack_num=replay_buffer_params.stack_num,
+            ignore_obs_next=True,
             sample_avail=True,
         )
 
@@ -229,20 +164,11 @@ def train(params):
     is_train = (np.random.rand(num_env) if is_vecenv else np.random.rand()) < train_prop
     is_demo = np.array([get_is_demo(0, params) for _ in range(num_env)]) if is_vecenv else get_is_demo(0, params)
 
-    # init counting-based probability
-    count_env_transition = training_params.count_env_transition
-    oao_counts = Counter()
-
     # init training
-    transition_train_steps = inference_params.transition_train_steps
-    encoder_train_steps = encoder_params.encoder_train_steps
-    train_steps = encoder_train_steps + transition_train_steps
-    eval_tau = cmi_params.eval_tau_0
-    ss_flag = False
-    gumbel_temp_0 = feedforward_enc_params.gumbel_temp_0
-    gumbel_temp_ss = feedforward_enc_params.gumbel_temp_ss
-    anneal_steps = feedforward_enc_params.anneal_steps
-    anneal_rate = feedforward_enc_params.anneal_rate
+    gumbel_temp_0 = gumbel_softmax_params.gumbel_temp_0
+    gumbel_temp_ss = gumbel_softmax_params.gumbel_temp_ss
+    anneal_steps = gumbel_softmax_params.anneal_steps
+    anneal_rate = gumbel_softmax_params.anneal_rate
 
     # save plots
     plot_dir = os.path.join(params.rslts_dir, "plots")
@@ -250,10 +176,8 @@ def train(params):
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
-        is_pre_train = training_params.init_steps - 1 <= step < inference_params.pre_train_steps + training_params.init_steps
-        # if (step + 1) % 100 == 0:
-        print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
-                                                                   is_init_stage, is_pre_train))
+        if (step + 1) % 100 == 0:
+            print("{}/{}, init_stage: {}".format(step + 1, total_steps, is_init_stage))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -324,66 +248,34 @@ def train(params):
             episode_reward += env_reward if is_task_learning else inference_reward
             episode_step += 1
 
-            # save env transitions in the replay buffer
-            if episode_step == 1:
-                obs_f = preprocess_obs(obs_f, params)  # convert to np.float32
-                obs = preprocess_obs(obs, params)
             hidden_state = {key: obs_f[key] for key in params.hidden_keys}
             info.update(hidden_state)
-            obs['act'], obs['rew'] = np.array([action], dtype=np.float32), np.array([env_reward])
+            obs['act'] = np.array([action])  # [s, a] -> s
 
-            next_obs_f = preprocess_obs(next_obs_f, params)
-            next_obs_f['act'], next_obs_f['rew'] = np.zeros(1), np.zeros(1)
-            next_obs = preprocess_obs(next_obs, params)
-            next_obs['act'], next_obs['rew'] = np.zeros(1), np.zeros(1)
-
-            # print(f"EPISODE STEP: {episode_step}")
             # is_train: if the transition is training data or evaluation data for inference_cmi
             if is_train:
-                if step > 0 and episode_step > 1:
-                    temp = buffer_train.obs_next[len(buffer_train) - 1]
-                    temp.act, temp.rew = obs['act'], obs['rew']
-                    buffer_train.obs_next[len(buffer_train) - 1] = temp
                 buffer_train.add(
                     Batch(obs=obs,
                           act=action,
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,  # next_obs_f when using identity encoder for next feature
                           info=info,
                           )
                 )
             else:
-                if step > 0 and episode_step > 1:
-                    temp = buffer_eval_cmi.obs_next[len(buffer_eval_cmi) - 1]
-                    temp.act, temp.rew = obs['act'], obs['rew']
-                    buffer_eval_cmi.obs_next[len(buffer_eval_cmi) - 1] = temp
                 buffer_eval_cmi.add(
                     Batch(obs=obs,
                           act=action,
                           rew=env_reward,
                           terminated=terminated,
                           truncated=truncated,
-                          obs_next=next_obs,
                           info=info,
                           )
                 )
             # ppo uses its own buffer
             if rl_algo == "hippo" and not is_init_stage:
                 policy.update_trajectory_list(obs, action, done, next_obs, info)
-
-            # counting-based probability construction P2(obs, action, next_obs)
-            if count_env_transition:
-                # convert to tuple for hashing
-                oa = {k: obs[k] for k in params.obs_keys_f + ['act'] if k in obs}
-                next_o = {k: next_obs[k] for k in params.obs_keys_f if k in next_obs}
-                oa_tup = tuple((k, tuple(v)) for k, v in oa.items())
-                next_o_tup = tuple((k, tuple(v)) for k, v in next_o.items())
-                oao_tup = oa_tup + next_o_tup
-
-                # Counting transitions
-                oao_counts.update([oao_tup])
 
             obs = next_obs
             obs_f = next_obs_f
@@ -392,125 +284,36 @@ def train(params):
         if is_init_stage:
             continue
 
-        if count_env_transition:
-            oao_probs = count2prob(oao_counts)
-
         if inference_gradient_steps > 0:
             inference.train()
             encoder.train()
-            decoder.train()
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
-                obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
-                    sample_process(batch_data, params)
-
-                if count_env_transition:
-                    oa_batch, next_o_batch = obs_batch_dict2tuple(obs_batch, params)
-                    oao_batch = [oa + next_o for oa, next_o in zip(oa_batch, next_o_batch)]
-                    oao_llh = count2prob_llh(oao_probs, oao_batch).to(params.device)
-                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                                                   rew_batch, next_rews_batch, mask_dset, oao_llh)
-                else:
-                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch,
-                                                   rew_batch, next_rews_batch, mask_dset)
+                obs_batch, hidden_batch = sample_inference(batch_data, params)
+                loss_detail = inference.update(obs_batch)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
-                loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
+                # loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
 
-                if (((step + 1) % training_params.plot_prob_freq == 0 or step == training_params.init_steps)
-                        and count_env_transition):
-                    oao_probs = list(oao_probs.values())
-                    len_oao = len(oao_probs)
-                    print(f'Number of oao probs: {len_oao}')
-
-                    hoa_probs = list(encoder.hoa_probs.values())
-                    len_hoa = len(hoa_probs)
-                    print(f'Number of hoa probs: {len_hoa}')
-
-                    fig, axs = plt.subplots(2, 1, figsize=(8, 6))
-
-                    # Plotting the oao probability distribution
-                    axs[0].bar(range(len_oao), oao_probs, color='blue')
-                    axs[0].set_title(f'oao probs with {len_oao} probs')
-                    axs[0].set_xlabel('oao')
-                    axs[0].set_ylabel('oao_probs')
-
-                    # Plotting the second probability distribution
-                    axs[1].bar(range(len_hoa), hoa_probs, color='green')
-                    axs[1].set_title(f'hoa probs with {len_hoa} probs')
-                    axs[1].set_xlabel('hoa')
-                    axs[1].set_ylabel('hoa_probs')
-
-                    plt.tight_layout()
-                    filename = os.path.join(plot_dir, f"probs_step_{step + 1}.png")
-                    plt.savefig(filename)
-                    plt.clf()
-                    # sys.exit()
-
             inference.eval()
             encoder.eval()
-            decoder.eval()
-            # if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
-            # if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
-            #         inference.update_num % train_steps >= encoder_train_steps):
-            if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
-                    inference.update_num >= inference_params.pre_train_steps):
+            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
                         batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, next_hidden_batch = \
-                            sample_process(batch_data, params)
-                        eval_pred_loss = inference.update_mask(obs_batch, actions_batch, next_obses_batch,
-                                                               rew_batch, next_rews_batch, eval_tau, mask_dset,
-                                                               next_hidden_batch)
+                        obs_batch, hidden_batch = sample_inference(batch_data, params)
+                        eval_pred_loss = inference.update_mask(obs_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                         print("mask_CMI", inference.mask_CMI)
-                        print("mask", inference.mask)
-
-                        if eval_pred_loss["eval_pred_kl_h"] < 0.005 and ss_flag:
-                            # if eval_pred_loss["next_pred_enco_hidden_acc"] == 1 and ss_flag:
-                            eval_tau = cmi_params.eval_tau_ss
-                            encoder.gumbel_temp = feedforward_enc_params.gumbel_temp_ss
-                            for param_group in inference.optimizer_transition.param_groups:
-                                param_group['lr'] = inference_params.lr_ss
-                            for param_group in inference.optimizer_enc_decoder.param_groups:
-                                param_group['lr'] = inference_params.lr_ss
-                            # for param_group in inference.optimizer.param_groups:
-                            #     param_group['lr'] = inference_params.lr_ss
-                            ss_flag = False
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    obs_batch, actions_batch, next_obses_batch, rew_batch, next_rews_batch, hidden_label_batch = \
-                        sample_process(batch_data, params)
-                    loss_detail = inference.update(obs_batch, actions_batch, next_obses_batch, rew_batch,
-                                                   next_rews_batch, mask_dset, eval=True)
+                    obs_batch, hidden_batch = sample_inference(batch_data, params)
+                    loss_detail = inference.update(obs_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
-
-            if (step + 1 - training_params.init_steps) % feedforward_enc_params.dset_eval_freq == 0:
-                mask_dset[:, :-1] = 0
-                mask = inference.mask.detach().long()
-                mask_row_ids = [i for i in range(mask.size(0)) if i not in encoder.hidden_objects_ind]
-                mask_col_ids = [j for j in range(mask.size(1) - 1) if j not in encoder.hidden_objects_ind]
-                for h_idx, h in enumerate(encoder.hidden_objects_ind):
-                    for i_idx, i in enumerate(mask_row_ids):
-                        if mask[i, h] == 1:
-                            if (step + 1 - training_params.init_steps) >= (5 * feedforward_enc_params.dset_eval_freq):
-                                mask_dset[h_idx, :encoder.num_dset_obs] += mask[i, mask_col_ids]
-                            else:
-                                mask_dset[h_idx, :encoder.num_dset_obs] = 1
-                            # mask_dset[h_idx, i_idx] = 1
-                            mask_dset[h_idx, encoder.num_dset_obs: (2 * encoder.num_dset_obs)] += \
-                                F.one_hot(torch.tensor(i_idx), encoder.num_dset_obs)
-                            # mask_dset[h_idx, -1] = mask[i, -1]
-                            # break
-                for h_idx, h in enumerate(encoder.hidden_objects_ind):
-                    if (mask_dset[h_idx, :encoder.num_dset_obs] == 0).all():
-                        mask_dset[h_idx, :encoder.num_dset_obs] = 1
-                print("mask_dset:", mask_dset)
 
             # inference.scheduler.step()
             # anneal the temperature
@@ -518,11 +321,8 @@ def train(params):
                 anneal_curr_step = step + 1 - training_params.init_steps
                 encoder.gumbel_temp = np.maximum(gumbel_temp_0 * np.exp(-anneal_rate * anneal_curr_step),
                                                  gumbel_temp_ss)
-                # encoder.gumbel_temp *= feedforward_enc_params.gumbel_temp_decay_rate
-                print("gumbel_temperature", encoder.gumbel_temp)
-            
-            if (step + 1 - training_params.init_steps) % 10000 == 0:
-                print("buffer_train_len", len(buffer_train))
+            # if (step + 1 - training_params.init_steps) % 10000 == 0:
+            #     print("buffer_train_len", len(buffer_train))
 
         if policy_gradient_steps > 0 and rl_algo != "random":
             policy.train()

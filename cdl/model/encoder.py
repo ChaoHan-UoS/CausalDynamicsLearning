@@ -1,6 +1,6 @@
 import sys
 
-from collections import Counter
+from collections import OrderedDict
 import numpy as np
 
 import torch
@@ -10,8 +10,7 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.one_hot_categorical import OneHotCategorical
 
-from model.inference_utils import reset_layer, forward_network, forward_network_batch, \
-    obs_batch_dict2tuple, count2prob, count2prob_llh
+from model.inference_utils import reset_layer, forward_network, forward_network_batch
 
 
 def reset_layer_lstm(w, b=None):
@@ -837,33 +836,180 @@ class ForwardEncoder(nn.Module):
         return enc_obs_obj, enc_obs_target
 
 
-def obs_encoder(params):
-    encoder_type = params.encoder_params.encoder_type
-    device = params.device
-    if encoder_type == "recurrent":
-        recurrent_enc_params = params.encoder_params.recurrent_enc_params
+
+class Encoder(nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        self.params = params
+        self.device = params.device
+        self.encoder_params = params.encoder_params
+        self.gumbel_temp = self.encoder_params.gumbel_softmax_params.gumbel_temp_0
+
         chemical_env_params = params.env_params.chemical_env_params
-        # obs_shape = len(params.obs_keys) * chemical_env_params.num_colors + params.action_dim + chemical_env_params.max_steps + 1
-        obs_shape = len(chemical_env_params.keys_dset) * chemical_env_params.num_colors + params.action_dim + 1
-        hidden_layer_size = recurrent_enc_params.hidden_layer_size
-        layer_num = recurrent_enc_params.layer_num
-        # logit_shape = chemical_env_params.num_objects * chemical_env_params.num_colors
-        logit_shape = len(params.hidden_ind) * chemical_env_params.num_colors  # one-hot colors of hidden objects
-        encoder = RecurrentEncoder(params, obs_shape, hidden_layer_size, layer_num, logit_shape).to(device)
-    elif encoder_type == "feedforward":
-        encoder = ForwardEncoder(params).to(device)
-    else:
-        raise ValueError("Unknown encoder_type: {}".format(encoder_type))
-    return encoder
+        self.hidden_objects_ind = chemical_env_params.hidden_objects_ind
+        self.hidden_targets_ind = chemical_env_params.hidden_targets_ind
+        self.hidden_ind = params.hidden_ind
+        self.num_objects = chemical_env_params.num_objects
+        self.num_colors = chemical_env_params.num_colors
+        self.num_hidden_objects = len(self.hidden_objects_ind)
+        self.num_obs_objects = self.num_objects - len(self.hidden_objects_ind)
+
+        self.o_keys = params.obs_keys[:self.num_obs_objects]
+        self.o_inner_dim = np.concatenate([params.obs_dims[key] for key in self.o_keys])
+        self.a_key = 'act'
+        self.a_inner_dim = params.action_dim
+        self.feature_dim = self.num_objects
+        self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
+
+        self.init_model()
+
+    def init_model(self):
+        self.xu_dim = xu_dim = self.o_inner_dim.sum() + self.a_inner_dim
+        self.dim_rnn_g = dim_rnn_g = self.encoder_params.dim_rnn_g
+        self.num_rnn_g = num_rnn_g = self.encoder_params.num_rnn_g
+        self.zxu_dim = zxu_dim = self.num_colors + self.o_inner_dim.sum() + self.a_inner_dim
+        self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
+        self.dims_cf_n = dims_cf_n = self.encoder_params.dims_cf_n
+        self.z_dim = z_dim = self.num_colors
+        dropout = self.encoder_params.dropout
+
+        # x_{t:T}, u_{t:T} -> g_t
+        self.rnn_g = nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True)
+
+        # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t
+        dic_layers = OrderedDict()
+        for n in range(len(dims_mlp_m)):
+            if n == 0:
+                dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
+            else:
+                dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
+            dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_mlp_m[n])
+            dic_layers['activation' + str(n)] = nn.ReLU()
+            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout)
+        dic_layers['linear_last'] = nn.Linear(dims_mlp_m[-1], dim_rnn_g)
+        dic_layers['layer_norm_last'] = nn.LayerNorm(dim_rnn_g)
+        dic_layers['activation_last'] = nn.ReLU()
+        dic_layers['dropout_last'] = nn.Dropout(p=dropout)
+        self.mlp_m = nn.Sequential(dic_layers)
+
+        # m_t, g_t -> n_t
+        dic_layers = OrderedDict()
+        for n in range(len(dims_cf_n)):
+            if n == 0:
+                dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                # dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
+            else:
+                dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
+            dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
+            dic_layers['activation' + str(n)] = nn.ReLU()
+            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout)
+        dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], z_dim)
+        self.cf_n = nn.Sequential(dic_layers)
+
+    def preprocess(self, obs):
+        """
+        :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+        :return o: (bs, seq_len,  num_observables * num_colors)
+                a: (bs, seq_len, num_observables)
+        """
+        # [(bs, seq_len, num_colors)] * num_observables
+        o = [F.one_hot(obs[k].squeeze().long(), i).float()
+             for k, i in zip(self.o_keys, self.o_inner_dim)]
+        # (bs, seq_len, num_observables * num_colors)
+        o = torch.cat(o, dim=-1)
+        # (bs, seq_len, num_observables)
+        a = F.one_hot(obs[self.a_key].squeeze().long(), self.a_inner_dim).float()
+        return o, a
+
+    def postprocess(self, x, z, u):
+        """
+        :param x: (bs, seq_len, num_observables * num_colors)
+        :param z: (bs, seq_len, num_colors)
+        :return xz: [[(bs, num_colors)] * num_objects] * seq_len
+                u: [(bs, num_observables)] * seq_len
+        """
+        xz = torch.cat((x, z), dim=-1)
+        xz = torch.unbind(xz, dim=1)
+        xz = [torch.split(xz_i, self.num_colors, dim=-1) for xz_i in xz]
+        u = torch.unbind(u, dim=1)
+        return xz, u
+
+    def reparam(self, logits):
+        if self.training:
+            sample = F.gumbel_softmax(logits, tau=self.gumbel_temp, hard=True)
+        else:
+            sample = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
+        return sample
+
+    def forward(self, obs):
+        """
+        :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+        :return z / z_probs: (bs, seq_len, num_colors)
+                x: (bs, seq_len, num_observables * num_colors)
+                u: (bs, seq_len, num_observables)
+        """
+        o, a = self.preprocess(obs)
+        x = o
+        u = torch.zeros_like(a)
+        u[:, 1:] = a[:, :-1]
+        bs, seq_len = x.shape[:2]
+
+        # assume 1 hidden object
+        z_probs = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+        z = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+
+        # x_{t:T}, u_{t:T} -> g_t;
+        # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
+        # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
+        x_tm1 = torch.zeros_like(x)
+        x_tm1[:, 1:] = x[:, :-1]
+        u_tm1 = torch.zeros_like(u)
+        u_tm1[:, :-1] = u[:, 1:]
+        xu = torch.cat((x, u_tm1), -1)
+        g, _ = self.rnn_g(torch.flip(xu, [1]))
+        g = torch.flip(g, [1])
+        for t in range(1, seq_len):
+            if t == 1:
+                m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
+            else:
+                zxu = torch.cat((z[:, t-1], x[:, t-2], u[:, t-1]), -1)
+                m = self.mlp_m(zxu)
+            mg = (m + g[:, t-1]) / 2
+            # mg = g[:, t-1]
+            # mg = torch.cat((m, g[:, t]), -1)
+            # (bs, num_colors)
+            n = self.cf_n(mg)
+            z_probs[:, t] = F.softmax(n / 1, dim=-1)
+            z[:, t] = self.reparam(n)  # z_t
+        return z, z_probs, x, u
 
 
-def act_encoder(actions_batch, env, params):
-    """
-    :param actions_batch: (bs, n_pred_step, action_dim)
-    :return: (bs, n_pred_step, num_objects)
-    """
-    a_ids = actions_batch.view(-1).to(torch.int64)
-    enc_actions_batch = torch.tensor([env.partial_act_dims[idx] for idx in a_ids],
-                                     dtype=torch.int64, device=params.device)
-    enc_actions_batch = enc_actions_batch.view(actions_batch.shape)
-    return enc_actions_batch
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

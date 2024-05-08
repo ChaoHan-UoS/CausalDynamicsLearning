@@ -1271,7 +1271,11 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            random_color = self.np_random.integers(0, self.num_colors)
+            random_color = 0
+            # if i == self.chemical_env_params.hidden_objects_ind[0]:
+            #     random_color = 0
+            # else:
+            #     random_color = self.np_random.integers(0, self.num_colors)
             self.object_to_color[i][random_color] = 1
 
         if self.movement == 'Dynamic':
@@ -1305,6 +1309,8 @@ class Chemical(gym.Env):
         ########################################################
         # print('OBJECT_TO_COLOR_TARGET INITIAL')
         # print(self.object_to_color_target)
+        # print('OBJECT_TO_COLOR INITIAL')
+        # print(self.object_to_color)
         ########################################################
 
         self.generate_target(num_steps)

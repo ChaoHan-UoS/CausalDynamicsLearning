@@ -12,17 +12,17 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.distribution import Distribution
 from torch.distributions.one_hot_categorical import OneHotCategorical
-from torch.distributions.kl import kl_divergence
 
 from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, decoder, params):
+    def __init__(self, encoder, params):
         super(Inference, self).__init__()
 
         self.params = params
         self.device = device = params.device
+        self.encoder_params = params.encoder_params
         self.inference_params = inference_params = params.inference_params
 
         self.residual = inference_params.residual
@@ -48,12 +48,8 @@ class Inference(nn.Module):
         self.dropout = nn.Dropout(p=inference_params.dropout)
 
         self.encoder = encoder
-        self.decoder = decoder
         self.parameters_encoder = list(self.encoder.parameters())
-        self.parameters_decoder = list(self.decoder.parameters())
-        # self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=3*inference_params.lr)
-        self.optimizer_enc_decoder = optim.Adam(
-            self.parameters_encoder + self.parameters_decoder, lr=inference_params.lr_0)
+        self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=inference_params.lr_0)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr_0)
 
         self.load(params.training_params.load_inference, device)
@@ -120,9 +116,6 @@ class Inference(nn.Module):
                     # (bs, n_pred_step, feature_i_dim)
                     logits = torch.stack([dist[i].logits for dist in dist_list], dim=-2)
                     stacked_dist_i = OneHotCategorical(logits=logits)
-                elif isinstance(dist_i, torch.Tensor):
-                    # (bs, n_pred_step, feature_i_dim)
-                    stacked_dist_i = torch.stack([dist[i] for dist in dist_list], dim=-2)
                 else:
                     raise NotImplementedError
                 stacked_dist_list.append(stacked_dist_i)
@@ -252,75 +245,41 @@ class Inference(nn.Module):
     def setup_annealing(self, step):
         pass
 
-    def prediction_loss_from_dist(self, pred_dist, next_feature, keep_variable_dim=False):
+    def prediction_loss_from_dist(self, pred_dist, next_feature, keep_variable_dim=False, loss_type="recon"):
         """
-        calculate prediction loss from the prediction distribution
-        if use a CNN encoder: prediction loss = KL divergence
-        else: prediction loss = -log_prob
-        :param pred_dist: next step value for all state variables in the format of distribution,
+        :param pred_dist:
             if state space is continuous:
                 a Normal distribution of shape (bs, n_pred_step, feature_dim)
             else:
                 a list of distributions, [OneHotCategorical / Normal] * feature_dim,
                 each of shape (bs, n_pred_step, feature_i_dim)
         :param next_feature:
-            if use a CNN encoder:
-                a Normal distribution of shape (bs, n_pred_step, feature_dim)
-            elif state space is continuous:
+            if state space is continuous:
                 a tensor of shape (bs, n_pred_step, feature_dim)
             else:
                 a list of tensors, [(bs, n_pred_step, feature_i_dim)] * feature_dim
         :param keep_variable_dim: whether to keep the dimension of state variables which is dim=-1
+        :param loss_type: "recon" or "kl"
         :return: (bs, n_pred_step, feature_dim) if keep_variable_dim else (bs, n_pred_step)
         """
-        if isinstance(next_feature, Distribution):
-            assert isinstance(next_feature, Normal)
-            next_feature = Normal(next_feature.mean.detach(), next_feature.stddev.detach())
-            pred_loss = kl_divergence(next_feature, pred_dist)                         # (bs, n_pred_step, feature_dim)
-        else:
+        if loss_type == "recon":
             if self.continuous_state:
                 next_feature = next_feature.detach()
-                pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
             else:
-                if self.training:
-                    # # KL loss between two OneHotCategorical distributions
-                    # next_feature = [OneHotCategorical(probs=next_feature_i)                # a list of distributions, [OneHotCategorical] * feature_dim,
-                    #                 for next_feature_i in next_feature]                    # each of shape (bs, n_pred_step, feature_i_dim)
-                    # pred_loss = [kl_divergence(next_dist_i, pred_dist_i)                   # [(bs, n_pred_step)] * feature_dim
-                    #              for pred_dist_i, next_dist_i in zip(pred_dist, next_feature)]
-
-                    # # Cross Entropy loss
-                    # pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                    #              for pred_dist_i in pred_dist]
-                    # next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
-                    #                 for next_feature_i in next_feature]
-                    # pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
-                    #              for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
-                    #
-                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
-
-                    # NLL loss of the OneHotCategorical distribution
-                    # (bs, n_pred_step, feature_dim)
-                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
-                else:
-                    # not backprop the gradient along the path of encoder
-                    # next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
-
-                    # NLL loss of the OneHotCategorical distribution
-                    pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, feature_dim)
-
-                    # # Cross Entropy loss / NLL
-                    # pred_dist = [pred_dist_i.permute(0, 2, 1)  # [(bs, feature_i_dim, n_pred_step)] * feature_dim
-                    #              for pred_dist_i in pred_dist]
-                    # next_feature = [torch.argmax(next_feature_i, dim=-1)  # [(bs, n_pred_step)] * feature_dim
-                    #                 for next_feature_i in next_feature]
-                    # pred_loss = [self.loss_ce(pred_dist_i, next_feature_i)  # [(bs, n_pred_step)] * feature_dim
-                    #              for pred_dist_i, next_feature_i in zip(pred_dist, next_feature)]
-                    #
-                    # pred_loss = torch.stack(pred_loss, dim=-1)  # (bs, n_pred_step, feature_dim)
+                next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+            pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, num_observables)
+        elif loss_type == "kl":
+            # (bs, n_pred_step, 1, num_colors)
+            prior_dist = torch.stack(pred_dist, dim=2)
+            infer_dist = torch.stack(next_feature, dim=2)
+            # summed over num_colors for KL; (bs, n_pred_step, 1)
+            pred_loss = torch.sum(infer_dist * (torch.log(infer_dist + 1e-20) -
+                                                torch.log(prior_dist + 1e-20)), dim=-1)
+        else:
+            raise NotImplementedError
 
         if not keep_variable_dim:
-            pred_loss = pred_loss.sum(dim=-1)                                           # (bs, n_pred_step)
+            pred_loss = pred_loss.sum(dim=-1)                                      # (bs, n_pred_step)
 
         return pred_loss
 
