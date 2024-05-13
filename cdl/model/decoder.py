@@ -33,26 +33,19 @@ class FeedforwardDecoder(nn.Module):
 
     def forward(self, feature):
         """
-        :param feature: [(bs, (n_pred_step), num_colors)] * (2 * num_objects)
-        :return: (bs, (n_pred_step), reward_dim)
+        :param feature: [(bs, n_pred_step, num_colors)] * (2 * num_objects)
+        :return rew: (bs, n_pred_step, reward_dim)
         """
-        feature = torch.stack(feature, dim=0)  # (2 * num_objects, bs, (n_pred_step), num_colors)
-        feature_dims = len(feature.shape)
-        if feature_dims == 4:
-            feature = feature.permute(1, 0, 2, 3)  # (bs, 2 * num_objects, n_pred_step, num_colors)
-            feature_pred_step = [feature_i.reshape((feature.shape[0], -1))
-                                 for feature_i in
-                                 torch.unbind(feature, dim=-2)]  # [(bs, 2 * num_objects * num_colors)] * n_pred_step
-            feature_dec = []
-            for feature_i in feature_pred_step:
-                feature_dec_i = self.feedforward(feature_i) # (bs, reward_dim)
-                feature_dec.append(feature_dec_i)  # [(bs, reward_dim)] * n_pred_step
-            feature_dec = torch.stack(feature_dec, dim=-2)  # (bs, n_pred_step, reward_dim)
-        else:
-            feature = feature.permute(1, 0, 2)  # (bs, 2 * num_objects, num_colors)
-            feature = feature.reshape((feature.shape[0], -1))  # (bs, 2 * num_objects * num_colors)
-            feature_dec = self.feedforward(feature)  # (bs, reward_dim)
-        return feature_dec
+        feature = torch.stack(feature, dim=-2)  # (bs, n_pred_step, 2 * num_objects, num_colors)
+        feature = [feature_i.reshape((feature.shape[0], -1))
+                   for feature_i in
+                   torch.unbind(feature, dim=1)]  # [(bs, 2 * num_objects * num_colors)] * n_pred_step
+        rew = []
+        for feature_i in feature:
+            rew_i = self.feedforward(feature_i)  # (bs, reward_dim)
+            rew.append(rew_i)  # [(bs, reward_dim)] * n_pred_step
+        rew = torch.stack(rew, dim=-2)  # (bs, n_pred_step, reward_dim)
+        return rew
 
 
 def rew_decoder(params):

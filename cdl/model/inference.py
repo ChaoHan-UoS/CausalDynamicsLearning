@@ -17,7 +17,7 @@ from utils.utils import to_numpy, preprocess_obs, postprocess_obs
 
 
 class Inference(nn.Module):
-    def __init__(self, encoder, params):
+    def __init__(self, encoder, decoder, params):
         super(Inference, self).__init__()
 
         self.params = params
@@ -48,8 +48,12 @@ class Inference(nn.Module):
         self.dropout = nn.Dropout(p=inference_params.dropout)
 
         self.encoder = encoder
+        self.decoder = decoder
         self.parameters_encoder = list(self.encoder.parameters())
+        self.parameters_decoder = list(self.decoder.parameters())
         self.optimizer_encoder = optim.Adam(self.parameters_encoder, lr=inference_params.lr_0)
+        self.optimizer_enc_decoder = optim.Adam(
+            self.parameters_encoder + self.parameters_decoder, lr=inference_params.lr_0)
         self.optimizer = optim.Adam(self.parameters(), lr=inference_params.lr_0)
 
         self.load(params.training_params.load_inference, device)
@@ -262,12 +266,13 @@ class Inference(nn.Module):
         :param loss_type: "recon" or "kl"
         :return: (bs, n_pred_step, feature_dim) if keep_variable_dim else (bs, n_pred_step)
         """
-        if loss_type == "recon":
+        if loss_type == "recon" or loss_type == "recon_h":
             if self.continuous_state:
                 next_feature = next_feature.detach()
             else:
                 next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
-            pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)  # (bs, n_pred_step, num_observables)
+            # (bs, n_pred_step, num_observables/num_hidden)
+            pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
         elif loss_type == "kl":
             # (bs, n_pred_step, 1, num_colors)
             prior_dist = torch.stack(pred_dist, dim=2)

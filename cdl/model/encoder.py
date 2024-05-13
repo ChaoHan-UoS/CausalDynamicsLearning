@@ -164,7 +164,6 @@ class RecurrentEncoder(RNN):
         if not self.continuous_state:
             self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
-
     def forward(self, obs, s_0=None):
         """
         :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
@@ -187,9 +186,11 @@ class RecurrentEncoder(RNN):
             obs_forward = [F.one_hot(obs_i.long(), obs_i_dim).float() if obs_i_dim > 1 else obs_i.unsqueeze(dim=-1)
                            for obs_i, obs_i_dim in zip(obs_forward, self.feature_inner_dim_p)]
 
-            obs_obs_forward = torch.stack(obs_forward, dim=0)  # (num_observables, bs, stack_num, (n_pred_step), num_colors)
+            obs_obs_forward = torch.stack(obs_forward,
+                                          dim=0)  # (num_observables, bs, stack_num, (n_pred_step), num_colors)
             # slice the current obs from the stack_num history
-            obs_obs_forward = torch.unbind(obs_obs_forward[:, :, -1])  # [(bs, (n_pred_step), num_colors)] * num_observables
+            obs_obs_forward = torch.unbind(
+                obs_obs_forward[:, :, -1])  # [(bs, (n_pred_step), num_colors)] * num_observables
 
             # identity encoder in the fully observable
             if len(self.hidden_ind) == 0:
@@ -207,7 +208,8 @@ class RecurrentEncoder(RNN):
             obs_obs = torch.stack(obs[:-2], dim=0)  # (num_dset_observables, bs, stack_num, (n_pred_step), num_colors)
 
             # slice in action and reward from observation
-            obs_act, obs_rew = obs[-2].clone(), obs[-1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
+            obs_act, obs_rew = obs[-2].clone(), obs[
+                -1].clone()  # (bs, stack_num, (n_pred_step), action_dim / reward_dim)
             # mask out the last action / reward in the stacked obs
             # obs_act[:, -1], obs_rew[:, -1] = obs_act[:, -1] * 0, obs_rew[:, -1] * 0
             obs_act[:, -1], obs_rew = obs_act[:, -1] * 0, obs_rew * 0
@@ -218,7 +220,8 @@ class RecurrentEncoder(RNN):
                 obs_obs = obs_obs.permute(1, 2, 0, 3, 4)  # (bs, stack_num, num_dset_objects, n_pred_step, num_colors)
                 obs_obs_pred_step = [obs_obs_i.reshape(obs_obs.shape[:2] + (-1,))
                                      for obs_obs_i in
-                                     torch.unbind(obs_obs, dim=-2)]  # [(bs, stack_num, num_dset_observables * num_colors)] * n_pred_step
+                                     torch.unbind(obs_obs,
+                                                  dim=-2)]  # [(bs, stack_num, num_dset_observables * num_colors)] * n_pred_step
                 obs_act_pred_step = [obs_act_i
                                      for obs_act_i in
                                      torch.unbind(obs_act, dim=-2)]  # [(bs, stack_num, action_dim)] * n_pred_step
@@ -237,21 +240,24 @@ class RecurrentEncoder(RNN):
                     obs_enc_i, s_n = super().forward(obs_i, s_0)  # obs_enc with shape (bs, logit_shape)
                     # s_0 = s_n
 
-                    obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
+                    obs_enc_i = obs_enc_i.reshape(-1, len(self.hidden_ind),
+                                                  self.num_colors)  # (bs, num_hidden_states, num_colors)
                     obs_enc_i = F.gumbel_softmax(obs_enc_i, hard=True) if self.training \
                         else F.one_hot(torch.argmax(obs_enc_i, dim=-1), obs_enc_i.size(-1)).float()
                     obs_enc.append(obs_enc_i)  # [(bs, num_hidden_states, num_colors)] * n_pred_step
                 obs_enc = torch.stack(obs_enc, dim=-2)  # (bs, num_hidden_states, n_pred_step, num_colors)
             else:
                 obs_obs = obs_obs.permute(1, 2, 0, 3)  # (bs, stack_num, num_dset_observables, num_colors)
-                obs_obs = obs_obs.reshape(obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_observables * num_colors)
+                obs_obs = obs_obs.reshape(
+                    obs_obs.shape[:2] + (-1,))  # (bs, stack_num, num_dset_observables * num_colors)
 
                 # concatenate one-hot observables, action and scalar reward along the last dim
                 # (bs, stack_num, num_dset_observables * num_colors + action_dim + reward_dim)
                 obs = torch.cat((obs_obs, obs_act, obs_rew), dim=-1)
 
                 obs_enc, s_n = super().forward(obs, s_0)  # obs_enc with shape (bs, logit_shape)
-                obs_enc = obs_enc.reshape(-1, len(self.hidden_ind), self.num_colors)  # (bs, num_hidden_states, num_colors)
+                obs_enc = obs_enc.reshape(-1, len(self.hidden_ind),
+                                          self.num_colors)  # (bs, num_hidden_states, num_colors)
                 obs_enc = F.gumbel_softmax(obs_enc, hard=True) if self.training \
                     else F.one_hot(torch.argmax(obs_enc, dim=-1), obs_enc.size(-1)).float()
             obs_enc = torch.unbind(obs_enc, dim=1)  # [(bs, (n_pred_step), num_colors)] * num_hidden_states
@@ -262,7 +268,8 @@ class RecurrentEncoder(RNN):
             if len(self.hidden_targets_ind) > 0:
                 obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
                           + obs_obs_forward[self.hidden_objects_ind[0]:(num_obs_objects + self.hidden_targets_ind[0])] \
-                          + obs_enc[num_hidden_objects:] + obs_obs_forward[(num_obs_objects + self.hidden_targets_ind[0]):]
+                          + obs_enc[num_hidden_objects:] + obs_obs_forward[
+                                                           (num_obs_objects + self.hidden_targets_ind[0]):]
             else:
                 obs_enc = obs_obs_forward[:self.hidden_objects_ind[0]] + obs_enc[:num_hidden_objects] \
                           + obs_obs_forward[self.hidden_objects_ind[0]:]
@@ -376,13 +383,16 @@ class ForwardEncoder(nn.Module):
             fc_dims = feedforward_enc_params.feature_fc_dims[1:]
             for feature_i_dim_dset in self.feature_inner_dim_dset:
                 in_dim = feature_i_dim_dset
-                self.state_feature_1st_layer_weights.append(nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+                self.state_feature_1st_layer_weights.append(
+                    nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
                 self.state_feature_1st_layer_biases.append(nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
             in_dim = out_dim
 
         for out_dim in fc_dims:
-            self.state_feature_weights.append(nn.Parameter(torch.zeros(num_hidden_objects * feature_dim_dset, in_dim, out_dim)))
-            self.state_feature_biases.append(nn.Parameter(torch.zeros(num_hidden_objects * feature_dim_dset, 1, out_dim)))
+            self.state_feature_weights.append(
+                nn.Parameter(torch.zeros(num_hidden_objects * feature_dim_dset, in_dim, out_dim)))
+            self.state_feature_biases.append(
+                nn.Parameter(torch.zeros(num_hidden_objects * feature_dim_dset, 1, out_dim)))
             in_dim = out_dim
 
         # predictor
@@ -529,10 +539,11 @@ class ForwardEncoder(nn.Module):
             # 2. extract global feature by element-wise max
             # (num_hidden_objects, feature_dim_dset + 1, bs, out_dim)
             full_sa_feature = torch.cat([full_state_feature, action_feature], dim=1)
-            full_sa_feature, full_sa_indices = full_sa_feature.max(dim=1)           # (num_hidden_objects, bs, out_dim)
+            full_sa_feature, full_sa_indices = full_sa_feature.max(dim=1)  # (num_hidden_objects, bs, out_dim)
 
             # 3. predict the distribution of next time step value
-            full_dist = self.predict_from_sa_feature(full_sa_feature, full_feature)  # [(bs, num_colors)] * num_hidden_objects
+            full_dist = self.predict_from_sa_feature(full_sa_feature,
+                                                     full_feature)  # [(bs, num_colors)] * num_hidden_objects
 
         if forward_masked:
             # 1. extract features of all state variables
@@ -543,12 +554,13 @@ class ForwardEncoder(nn.Module):
             # mask out unused features
             # (num_hidden_objects, feature_dim_dset + 1, bs, out_dim)
             masked_sa_feature = torch.cat([masked_state_feature, action_feature], dim=1)
-            mask = mask.permute(1, 2, 0)                                            # (num_hidden_objects, feature_dim_dset + 1, bs)
+            mask = mask.permute(1, 2, 0)  # (num_hidden_objects, feature_dim_dset + 1, bs)
             masked_sa_feature[~mask] = float('-inf')
-            masked_sa_feature, masked_sa_indices = masked_sa_feature.max(dim=1)     # (num_hidden_objects, bs, out_dim)
+            masked_sa_feature, masked_sa_indices = masked_sa_feature.max(dim=1)  # (num_hidden_objects, bs, out_dim)
 
             # 3. predict the distribution of next time step value
-            masked_dist = self.predict_from_sa_feature(masked_sa_feature, masked_feature)  # [(bs, num_colors)] * num_hidden_objects
+            masked_dist = self.predict_from_sa_feature(masked_sa_feature,
+                                                       masked_feature)  # [(bs, num_colors)] * num_hidden_objects
 
         return full_dist, masked_dist
 
@@ -591,8 +603,8 @@ class ForwardEncoder(nn.Module):
             else: [OneHotCategorical / Normal]  * feature_dim, each of shape (bs, n_pred_step, feature_i_dim)
         """
         if self.continuous_state:
-            mu = torch.stack([dist.mean for dist in dist_list], dim=-2)         # (bs, n_pred_step, feature_dim)
-            std = torch.stack([dist.stddev for dist in dist_list], dim=-2)      # (bs, n_pred_step, feature_dim)
+            mu = torch.stack([dist.mean for dist in dist_list], dim=-2)  # (bs, n_pred_step, feature_dim)
+            std = torch.stack([dist.stddev for dist in dist_list], dim=-2)  # (bs, n_pred_step, feature_dim)
             return Normal(mu, std)
         else:
             # [(bs, n_pred_step, feature_i_dim)]
@@ -836,7 +848,6 @@ class ForwardEncoder(nn.Module):
         return enc_obs_obj, enc_obs_target
 
 
-
 class Encoder(nn.Module):
     def __init__(self, params):
         super().__init__()
@@ -857,7 +868,9 @@ class Encoder(nn.Module):
 
         self.o_keys = params.obs_keys[:self.num_obs_objects]
         self.o_inner_dim = np.concatenate([params.obs_dims[key] for key in self.o_keys])
-        self.a_key = 'act'
+        self.ot_keys = params.obs_keys
+        self.ot_inner_dim = np.concatenate([params.obs_dims[key] for key in self.ot_keys])
+        self.a_key, self.r_key = 'act', 'rew'
         self.a_inner_dim = params.action_dim
         self.feature_dim = self.num_objects
         self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
@@ -865,10 +878,12 @@ class Encoder(nn.Module):
         self.init_model()
 
     def init_model(self):
-        self.xu_dim = xu_dim = self.o_inner_dim.sum() + self.a_inner_dim
+        # self.xu_dim = xu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
+        self.xu_dim = xu_dim = 2 * self.num_colors + self.a_inner_dim
         self.dim_rnn_g = dim_rnn_g = self.encoder_params.dim_rnn_g
         self.num_rnn_g = num_rnn_g = self.encoder_params.num_rnn_g
-        self.zxu_dim = zxu_dim = self.num_colors + self.o_inner_dim.sum() + self.a_inner_dim
+        # self.zxu_dim = zxu_dim = self.num_colors + self.o_inner_dim.sum() + self.a_inner_dim
+        self.zxu_dim = zxu_dim = 2 * self.num_colors + self.a_inner_dim
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
         self.dims_cf_n = dims_cf_n = self.encoder_params.dims_cf_n
         self.z_dim = z_dim = self.num_colors
@@ -912,6 +927,8 @@ class Encoder(nn.Module):
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
         :return o: (bs, seq_len,  num_observables * num_colors)
                 a: (bs, seq_len, num_observables)
+                ot: [(bs, seq_len, num_colors)] * (num_observables + num_objects)
+                r: (bs, seq_len, 1)
         """
         # [(bs, seq_len, num_colors)] * num_observables
         o = [F.one_hot(obs[k].squeeze().long(), i).float()
@@ -920,7 +937,12 @@ class Encoder(nn.Module):
         o = torch.cat(o, dim=-1)
         # (bs, seq_len, num_observables)
         a = F.one_hot(obs[self.a_key].squeeze().long(), self.a_inner_dim).float()
-        return o, a
+        # [(bs, seq_len, num_colors)] * (num_observables + num_objects)
+        ot = [F.one_hot(obs[k].squeeze().long(), i).float()
+              for k, i in zip(self.ot_keys, self.ot_inner_dim)]
+        # (bs, seq_len, 1)
+        r = obs[self.r_key]
+        return o, a, ot, r
 
     def postprocess(self, x, z, u):
         """
@@ -948,8 +970,10 @@ class Encoder(nn.Module):
         :return z / z_probs: (bs, seq_len, num_colors)
                 x: (bs, seq_len, num_observables * num_colors)
                 u: (bs, seq_len, num_observables)
+                st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
+                r: (bs, seq_len - 2, 1)
         """
-        o, a = self.preprocess(obs)
+        o, a, ot, r = self.preprocess(obs)
         x = o
         u = torch.zeros_like(a)
         u[:, 1:] = a[:, :-1]
@@ -966,50 +990,34 @@ class Encoder(nn.Module):
         x_tm1[:, 1:] = x[:, :-1]
         u_tm1 = torch.zeros_like(u)
         u_tm1[:, :-1] = u[:, 1:]
-        xu = torch.cat((x, u_tm1), -1)
+        # xu = torch.cat((x, u_tm1), -1)
+        xu = torch.cat((x[:, :, 2 * self.num_colors: 3 * self.num_colors],
+                        x_tm1[:, :, 2 * self.num_colors: 3 * self.num_colors], u), -1)
         g, _ = self.rnn_g(torch.flip(xu, [1]))
         g = torch.flip(g, [1])
         for t in range(1, seq_len):
-            if t == 1:
-                m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
-            else:
-                zxu = torch.cat((z[:, t-1], x[:, t-2], u[:, t-1]), -1)
-                m = self.mlp_m(zxu)
-            mg = (m + g[:, t-1]) / 2
+            # if t == 1:
+            #     # m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
+            #     # zxu = torch.cat((z[:, t - 1], 0 * x[:, t - 1], u[:, t - 1]), -1)
+            #     # z_probs[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
+            #     # z[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
+            # else:
+            #     # zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
+            #     zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
+            zxu = torch.cat((x[:, t - 1][:, 2*self.num_colors: 3*self.num_colors],
+                             x[:, t][:, 2*self.num_colors: 3*self.num_colors], u[:, t]), -1)
+            m = self.mlp_m(zxu)
+            # mg = (m + g[:, t]) / 2
             # mg = g[:, t-1]
             # mg = torch.cat((m, g[:, t]), -1)
             # (bs, num_colors)
-            n = self.cf_n(mg)
+            n = self.cf_n(m)
             z_probs[:, t] = F.softmax(n / 1, dim=-1)
             z[:, t] = self.reparam(n)  # z_t
-        return z, z_probs, x, u
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        # state + target / reward: t=2 to T-1
+        # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
+        st = ([ot_i[:, 1:-1] for ot_i in ot[:self.hidden_objects_ind[0]]] + [z[:, 2:]]
+              + [ot_i[:, 1:-1] for ot_i in ot[self.hidden_objects_ind[0]:]])
+        r = r[:, :-2]
+        return z, z_probs, x, u, st, r

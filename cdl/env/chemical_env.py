@@ -1064,6 +1064,7 @@ class Chemical(gym.Env):
             self.match_type = list(range(self.num_objects))
 
         self.partial_obs_keys = params.obs_keys
+        # self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)]
         self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)
                                  if i not in chemical_env_params.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
@@ -1090,8 +1091,20 @@ class Chemical(gym.Env):
         """
         s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
         a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
+        # adjacency_diag = torch.eye(self.num_objects)
+        # adjacency_pa = self.adjacency_matrix - adjacency_diag
+        # s_t1 = torch.fmod(torch.matmul(adjacency_pa * a_t.unsqueeze(-1) + adjacency_diag, s_t) + a_t,
+        #                   self.num_colors)  # one-step transition
+        # h_adj = torch.zeros_like(self.adjacency_matrix)
+        # h_adj[0, 0] = 1
+        # h = torch.zeros_like(s_t)
+        # h[0] = self.np_random.integers(0, self.num_colors)
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix - h_adj, s_t) + h + a_t, self.num_colors)
 
-        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
+        # h = torch.zeros_like(a_t)
+        # h[0] = 1
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
+        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
 
@@ -1271,11 +1284,11 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            random_color = 0
+            # random_color = 1
             # if i == self.chemical_env_params.hidden_objects_ind[0]:
             #     random_color = 0
             # else:
-            #     random_color = self.np_random.integers(0, self.num_colors)
+            random_color = self.np_random.integers(0, self.num_colors)
             self.object_to_color[i][random_color] = 1
 
         if self.movement == 'Dynamic':

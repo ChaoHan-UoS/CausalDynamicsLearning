@@ -25,6 +25,7 @@ from model.hippo import HiPPO
 from model.model_based import ModelBased
 
 from model.encoder import Encoder
+from model.decoder import rew_decoder
 
 from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
     get_start_step_from_model_loading, preprocess_obs, postprocess_obs
@@ -89,6 +90,7 @@ def train(params):
     # init model
     update_obs_act_spec(env, params)
     encoder = Encoder(params)
+    decoder = rew_decoder(params)
 
     inference_algo = params.training_params.inference_algo
     use_cmi = inference_algo == "cmi"
@@ -104,7 +106,7 @@ def train(params):
         Inference = InferenceCMI
     else:
         raise NotImplementedError
-    inference = Inference(encoder, params)
+    inference = Inference(encoder, decoder, params)
 
     scripted_policy = get_scripted_policy(env, params)
     rl_algo = params.training_params.rl_algo
@@ -176,8 +178,11 @@ def train(params):
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
+        is_pre_train = (training_params.init_steps - 1 <= step
+                        < inference_params.pre_train_steps + training_params.init_steps)
         if (step + 1) % 100 == 0:
-            print("{}/{}, init_stage: {}".format(step + 1, total_steps, is_init_stage))
+            print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
+                                                                       is_init_stage, is_pre_train))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -250,7 +255,7 @@ def train(params):
 
             hidden_state = {key: obs_f[key] for key in params.hidden_keys}
             info.update(hidden_state)
-            obs['act'] = np.array([action])  # [s, a] -> s
+            obs['act'], obs['rew'] = np.array([action]), np.array([env_reward])  # [s, a, r] -> s
 
             # is_train: if the transition is training data or evaluation data for inference_cmi
             if is_train:
@@ -287,6 +292,7 @@ def train(params):
         if inference_gradient_steps > 0:
             inference.train()
             encoder.train()
+            decoder.train()
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
@@ -299,7 +305,9 @@ def train(params):
 
             inference.eval()
             encoder.eval()
-            if (step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0:
+            decoder.eval()
+            if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
+                    inference.update_num >= inference_params.pre_train_steps):
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
                     inference.reset_causal_graph_eval()
