@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
+    "obs_keys_f": ["obj0", "obj1", "obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 5,
     "cuda_id": 0,
     "env_params": {
@@ -35,10 +35,10 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [2],
+            "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 5,
-            "num_colors": 5,
+            "num_objects": 3,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -51,7 +51,7 @@
             "use_cuda": false,
             "max_steps": 3,
             "num_target_interventions": 3,
-            "g": "chain5",
+            "g": "chain3",
             "match_type": "all",
             "dense_reward": true
         }
@@ -84,12 +84,12 @@
         }
     },
     "encoder_params": {
-        "encoder_freq": 1000,
+        "encoder_freq": 0,
         "dim_rnn_g": 64,
         "num_rnn_g": 1,
         "dims_mlp_m": [64, 64],
         "dims_cf_n": [64],
-        "dropout": 0,
+        "dropout_p": 0,
         "gumbel_softmax_params": {
             "gumbel_temp_0": 3,
             "gumbel_temp_ss": 1,
@@ -103,15 +103,10 @@
             "dropout": 0
          },
         "feedforward_enc_params": {
-            "feature_fc_dims": [64, 64],
-            "generative_fc_dims": [64, 64],
-            "dropout": 0,
-            "gumbel_temp_0": 3,
-            "gumbel_temp_ss": 0.3,
-            "anneal_steps": 500,
-            "anneal_rate": 0.00005,
-            "dset_eval_freq": 10000000
-          }
+            "feature_fc_dims": [64],
+            "generative_fc_dims": [64],
+            "dropout_p": 0
+        }
     },
     "decoder_params": {
         "decoder_type": "feedforward",
@@ -122,11 +117,11 @@
          }
     },
     "inference_params": {
-        "pre_train_steps": 2000,
-        "transition_freq": 1000,
-        "alter_steps": 7000,
-        "batch_size": 2,
-        "lr_0": 1e-3,
+        "pre_train_steps": 0,
+        "transition_freq": 0,
+        "alter_steps": 0,
+        "batch_size": 128,
+        "lr_0": 3e-4,
         "lr_ss": 1e-4,
         "lr_scheduler_step_size": 100,
         "lr_scheduler_gamma": 0.999,

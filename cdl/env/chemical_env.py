@@ -1358,6 +1358,20 @@ class Chemical(gym.Env):
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
     def step(self, action: int):
+        matches = 0.
+        for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
+            if i not in self.match_type:
+                continue
+            if (c1 == c2).all():
+                matches += 1
+
+        num_needed_match = len(self.match_type)
+        if self.dense_reward:
+            reward = matches / num_needed_match
+        else:
+            reward = float(matches == num_needed_match)
+        info = {"success": matches == num_needed_match}
+
         partial_action = self.partial_act_dims[action]
         obj_id = partial_action
         self.translate(obj_id)
@@ -1376,20 +1390,6 @@ class Chemical(gym.Env):
                 if self.valid_pos(new_pos, idx):
                     obj.pos = new_pos
                     break
-
-        matches = 0.
-        for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
-            if i not in self.match_type:
-                continue
-            if (c1 == c2).all():
-                matches += 1
-
-        num_needed_match = len(self.match_type)
-        if self.dense_reward:
-            reward = matches / num_needed_match
-        else:
-            reward = float(matches == num_needed_match)
-        info = {"success": matches == num_needed_match}
 
         self.cur_step += 1
 

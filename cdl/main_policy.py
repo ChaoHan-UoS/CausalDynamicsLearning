@@ -297,7 +297,7 @@ def train(params):
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
                 obs_batch, hidden_batch = sample_inference(batch_data, params)
-                loss_detail = inference.update(obs_batch)
+                loss_detail = inference.update(obs_batch, hidden_batch)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 # loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])

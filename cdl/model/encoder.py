@@ -875,7 +875,18 @@ class Encoder(nn.Module):
         self.feature_dim = self.num_objects
         self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
+        # hindsight encoder implemented as aggregate FNN
+        self.feedforward_enc_params = params.encoder_params.feedforward_enc_params
+        self.hind_feature_dim = 2 * self.num_obs_objects
+        self.continuous_state = params.continuous_state
+        self.hind_feature_inner_dim, self.hidden_feature_inner_dim = None, None
+        if not self.continuous_state:
+            self.hind_feature_inner_dim = np.array([self.num_colors for _ in range(self.hind_feature_dim)])
+            self.hidden_feature_inner_dim = np.array([self.num_colors for _ in range(self.num_hidden_objects)])
+        self.dropout = nn.Dropout(p=self.feedforward_enc_params.dropout_p)
+
         self.init_model()
+        self.reset_params()
 
     def init_model(self):
         # self.xu_dim = xu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
@@ -887,7 +898,7 @@ class Encoder(nn.Module):
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
         self.dims_cf_n = dims_cf_n = self.encoder_params.dims_cf_n
         self.z_dim = z_dim = self.num_colors
-        dropout = self.encoder_params.dropout
+        dropout_p = self.encoder_params.dropout_p
 
         # x_{t:T}, u_{t:T} -> g_t
         self.rnn_g = nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True)
@@ -901,11 +912,11 @@ class Encoder(nn.Module):
                 dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
             dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_mlp_m[n])
             dic_layers['activation' + str(n)] = nn.ReLU()
-            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout)
+            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
         dic_layers['linear_last'] = nn.Linear(dims_mlp_m[-1], dim_rnn_g)
         dic_layers['layer_norm_last'] = nn.LayerNorm(dim_rnn_g)
         dic_layers['activation_last'] = nn.ReLU()
-        dic_layers['dropout_last'] = nn.Dropout(p=dropout)
+        dic_layers['dropout_last'] = nn.Dropout(p=dropout_p)
         self.mlp_m = nn.Sequential(dic_layers)
 
         # m_t, g_t -> n_t
@@ -918,14 +929,287 @@ class Encoder(nn.Module):
                 dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
             dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
             dic_layers['activation' + str(n)] = nn.ReLU()
-            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout)
+            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
         dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], z_dim)
         self.cf_n = nn.Sequential(dic_layers)
+
+        params = self.params
+        feedforward_enc_params = self.feedforward_enc_params
+        continuous_state = self.continuous_state
+        self.action_dim = action_dim = params.action_dim
+        hind_feature_dim = self.hind_feature_dim
+        num_hidden_objects = self.num_hidden_objects
+
+        # [(num_hidden_objects, in_dim_i, out_dim_i)] * len(feature_fc_dims)
+        self.action_feature_weights = nn.ParameterList()
+        # [(num_hidden_objects, 1, out_dim_i)] * len(feature_fc_dims)
+        self.action_feature_biases = nn.ParameterList()
+
+        # [(num_hidden_objects * hind_feature_dim, in_dim_i, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
+        self.state_feature_weights = nn.ParameterList()
+        # [(num_hidden_objects * hind_feature_dim, 1, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
+        self.state_feature_biases = nn.ParameterList()
+
+        # [(num_hidden_objects, in_dim_i, out_dim_i)] * len(generative_fc_dims)
+        self.generative_weights = nn.ParameterList()
+        # [(num_hidden_objects, 1, out_dim_i)] * len(generative_fc_dims)
+        self.generative_biases = nn.ParameterList()
+
+        # only needed for discrete state space
+        # [(num_hidden_objects, hind_feature_inner_dim_i, out_dim)] * len(hind_feature_inner_dim)
+        self.state_feature_1st_layer_weights = nn.ParameterList()
+        # [(num_hidden_objects, 1, out_dim)] * len(hind_feature_inner_dim)
+        self.state_feature_1st_layer_biases = nn.ParameterList()
+
+        # [(1, in_dim, hidden_feature_inner_dim_i)] * len(hidden_feature_inner_dim)
+        self.generative_last_layer_weights = nn.ParameterList()
+        # [(1, 1, hidden_feature_inner_dim_i)] * len(hidden_feature_inner_dim)
+        self.generative_last_layer_biases = nn.ParameterList()
+
+        # Instantiate the parameters of each layer in the model of each variable at next time step to predict
+        # action feature extractor
+        in_dim = action_dim
+        for out_dim in feedforward_enc_params.feature_fc_dims:
+            self.action_feature_weights.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+            self.action_feature_biases.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+            in_dim = out_dim
+
+        # state feature extractor
+        if continuous_state:
+            in_dim = 1
+            fc_dims = feedforward_enc_params.feature_fc_dims
+        else:
+            out_dim = feedforward_enc_params.feature_fc_dims[0]
+            fc_dims = feedforward_enc_params.feature_fc_dims[1:]
+            for feature_i_dim_dset in self.hind_feature_inner_dim:
+                in_dim = feature_i_dim_dset
+                self.state_feature_1st_layer_weights.append(
+                    nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+                self.state_feature_1st_layer_biases.append(
+                    nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+            in_dim = out_dim
+
+        for out_dim in fc_dims:
+            self.state_feature_weights.append(
+                nn.Parameter(torch.zeros(num_hidden_objects * hind_feature_dim, in_dim, out_dim)))
+            self.state_feature_biases.append(
+                nn.Parameter(torch.zeros(num_hidden_objects * hind_feature_dim, 1, out_dim)))
+            in_dim = out_dim
+
+        # predictor
+        in_dim = feedforward_enc_params.feature_fc_dims[-1]
+        for out_dim in feedforward_enc_params.generative_fc_dims:
+            self.generative_weights.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+            self.generative_biases.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+            in_dim = out_dim
+
+        if continuous_state:
+            self.generative_weights.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, 2)))
+            self.generative_biases.append(
+                nn.Parameter(torch.zeros(num_hidden_objects, 1, 2)))
+        else:
+            for feature_i_dim_hiddens in self.hidden_feature_inner_dim:
+                final_dim = 2 if feature_i_dim_hiddens == 1 else feature_i_dim_hiddens
+                self.generative_last_layer_weights.append(
+                    nn.Parameter(torch.zeros(1, in_dim, final_dim)))
+                self.generative_last_layer_biases.append(
+                    nn.Parameter(torch.zeros(1, 1, final_dim)))
+
+    def reset_params(self):
+        for w, b in zip(self.action_feature_weights, self.action_feature_biases):
+            for i in range(self.num_hidden_objects):
+                reset_layer(w[i], b[i])
+        for w, b in zip(self.state_feature_1st_layer_weights, self.state_feature_1st_layer_biases):
+            for i in range(self.num_hidden_objects):
+                reset_layer(w[i], b[i])
+        for w, b in zip(self.state_feature_weights, self.state_feature_biases):
+            for i in range(self.num_hidden_objects * self.hind_feature_dim):
+                reset_layer(w[i], b[i])
+        for w, b in zip(self.generative_weights, self.generative_biases):
+            for i in range(self.num_hidden_objects):
+                reset_layer(w[i], b[i])
+        for w, b in zip(self.generative_last_layer_weights, self.generative_last_layer_biases):
+            reset_layer(w, b)
+
+    def extract_action_feature(self, action):
+        """
+        :param action: (bs, action_dim)
+        :return: (num_hidden_objects, 1, bs, out_dim)
+        """
+        action = action.unsqueeze(dim=0)  # (1, bs, action_dim)
+        action = action.expand(self.num_hidden_objects, -1, -1)  # (num_hidden_objects, bs, action_dim)
+        action_feature = forward_network(action,
+                                         self.action_feature_weights,
+                                         self.action_feature_biases,
+                                         dropout=self.dropout)  # (num_hidden_objects, bs, feature_fc_dims[-1])
+        return action_feature.unsqueeze(dim=1)  # (num_hidden_objects, 1, bs, out_dim)
+
+    def extract_state_feature(self, feature):
+        """
+        :param feature:
+            if state space is continuous: (bs, feature_dim)
+            else: [(bs, num_colors)] * hind_feature_dim
+        :return: (num_hidden_objects, hind_feature_dim, bs, out_dim),
+            the first dim is each state variable to predict, the second dim is inputs for the prediction
+        """
+        num_hidden_objects = self.num_hidden_objects
+        hind_feature_dim = self.hind_feature_dim
+        if self.continuous_state:
+            bs = feature.shape[0]
+            # x = feature.transpose(0, 1)  # (feature_dim, bs)
+            # x = x.repeat(feature_dim, 1, 1)  # (feature_dim, feature_dim, bs)
+            # x = x.view(feature_dim * feature_dim, bs, 1)  # (feature_dim * feature_dim, bs, 1)
+        else:
+            bs = feature[0].shape[0]
+            # [(num_hidden_objects, bs, num_colors)] * hind_feature_dim
+            reshaped_feature = []
+            for f_i in feature:
+                f_i = f_i.repeat(num_hidden_objects, 1, 1)  # (num_hidden_objects, bs, num_colors)
+                reshaped_feature.append(f_i)
+            # [(num_hidden_objects, bs, out_dim)] * hind_feature_dim
+            x = forward_network_batch(reshaped_feature,
+                                      self.state_feature_1st_layer_weights,
+                                      self.state_feature_1st_layer_biases,
+                                      dropout=self.dropout)
+            x = torch.stack(x, dim=1)  # (num_hidden_objects, hind_feature_dim, bs, out_dim)
+            # (num_hidden_objects * hind_feature_dim, bs, out_dim)
+            x = x.view(num_hidden_objects * hind_feature_dim, *x.shape[2:])
+
+        # (num_hidden_objects * hind_feature_dim, bs, out_dim)
+        state_feature = forward_network(x,
+                                        self.state_feature_weights,
+                                        self.state_feature_biases,
+                                        dropout=self.dropout)
+        state_feature = state_feature.view(num_hidden_objects, hind_feature_dim, bs, -1)
+        return state_feature  # (num_hidden_objects, hind_feature_dim, bs, out_dim)
+
+    def predict_from_sa_feature(self, sa_feature, residual_base=None):
+        """
+        predict the distribution and sample for the next step value of all state variables
+        :param sa_feature: (num_hidden_objects, bs, out_dim)
+        :param residual_base: (bs, feature_dim), residual used for continuous state variable prediction
+        :return: if state space is continuous: a Normal distribution of shape (bs, feature_dim)
+            else: [(bs, num_colors)] * num_hidden_objects
+        """
+        x = forward_network(sa_feature,
+                            self.generative_weights,
+                            self.generative_biases,
+                            dropout=self.dropout)  # (num_hidden_objects, bs, out_dim)
+
+        if self.continuous_state:
+            x = x.permute(1, 0, 2)  # (bs, feature_dim, 2)
+            mu, log_std = x.unbind(dim=-1)  # (bs, feature_dim) * 2
+            return self.normal_helper(mu, residual_base, log_std)
+        else:
+            x = F.relu(x)  # (num_hidden_objects, bs, out_dim)
+            x = [x_i.unsqueeze(dim=0) for x_i in torch.unbind(x, dim=0)]  # [(1, bs, out_dim)] * num_hidden_objects
+            x = forward_network_batch(x,
+                                      self.generative_last_layer_weights,
+                                      self.generative_last_layer_biases,
+                                      activation=None,
+                                      dropout=self.dropout)  # [(1, bs, num_colors)] * num_hidden_objects
+
+            dist = []
+            for feature_i_inner_dim_hiddens, dist_i in zip(self.hidden_feature_inner_dim, x):
+                dist_i = dist_i.squeeze(dim=0)  # (bs, num_colors)
+                if feature_i_inner_dim_hiddens == 1:
+                    mu, log_std = torch.split(dist_i, 1, dim=-1)  # (bs, 1), (bs, 1)
+                    # dist.append(self.normal_helper(mu, base_i, log_std))
+                else:
+                    dist.append(dist_i)
+            return dist
+
+    def forward_step(self, full_feature, masked_feature, action, mask=None):
+        """
+        :param full_feature: if state space is continuous: (bs, feature_dim).
+            Otherwise: [(bs, num_colors)] * hind_feature_dim
+            if it is None, no need to forward it
+        :param masked_feature: (bs, feature_dim) or [(bs, num_colors)] * hind_feature_dim
+        :param action: (bs, action_dim)
+        :param mask: (bs, num_hidden_objects, hind_feature_dim + 1)
+        :return: if state space is continuous: a Normal distribution of shape (bs, feature_dim)
+            else: [OneHotCategorical / Normal] * num_hidden_objects, each of shape (bs, num_colors)
+        """
+        forward_full = full_feature is not None
+        forward_masked = masked_feature is not None
+        full_state_feature = None
+        full_dist = masked_dist = None
+
+        # extract features of the action
+        # (bs, action_dim) -> (num_hidden_objects, 1, bs, out_dim)
+        self.action_feature = action_feature = self.extract_action_feature(action)
+
+        if forward_full:
+            # 1. extract features of all state variables
+            # [(bs, num_colors)] * hind_feature_dim -> (num_hidden_objects, hind_feature_dim, bs, out_dim)
+            self.full_state_feature = full_state_feature = self.extract_state_feature(full_feature)
+
+            # 2. extract global feature by element-wise max
+            # (num_hidden_objects, hind_feature_dim + 1, bs, out_dim)
+            full_sa_feature = torch.cat([full_state_feature, action_feature], dim=1)
+            full_sa_feature, full_sa_indices = full_sa_feature.max(dim=1)           # (num_hidden_objects, bs, out_dim)
+
+            # 3. predict the distribution of next time step value
+            full_dist = self.predict_from_sa_feature(full_sa_feature, full_feature)  # [(bs, num_colors)] * num_hidden_objects
+
+        if forward_masked:
+            # 1. extract features of all state variables
+            # (num_hidden_objects, hind_feature_dim, bs, out_dim)
+            masked_state_feature = self.extract_state_feature(masked_feature)
+
+            # 2. extract global feature by element-wise max
+            # mask out unused features
+            # (num_hidden_objects, hind_feature_dim + 1, bs, out_dim)
+            masked_sa_feature = torch.cat([masked_state_feature, action_feature], dim=1)
+            mask = mask.permute(1, 2, 0)                                            # (num_hidden_objects, hind_feature_dim + 1, bs)
+            masked_sa_feature[~mask] = float('-inf')
+            masked_sa_feature, masked_sa_indices = masked_sa_feature.max(dim=1)     # (num_hidden_objects, bs, out_dim)
+
+            # 3. predict the distribution of next time step value
+            masked_dist = self.predict_from_sa_feature(masked_sa_feature, masked_feature)  # [(bs, num_colors)] * num_hidden_objects
+
+        return full_dist, masked_dist
+
+    def forward_with_feature(self, features, actions, mask=None, forward_mode=("full", "masked")):
+        """
+        :param features: (bs, feature_dim) if state space is continuous
+            else [(bs, num_colors)] * hind_feature_dim
+        :param actions: (bs, action_dim)
+        :param mask: (bs, num_hidden_objects, hind_feature_dim + 1)
+        :param forward_mode
+        :return result_dists: [[(bs, num_colors)] * num_hidden_objects] * len(forward_mode)
+        """
+
+        if "masked" in forward_mode:
+            assert mask is not None
+
+        full_features = features if "full" in forward_mode else None
+        masked_features = features if "masked" in forward_mode else None
+        # [(bs, num_colors)] * num_hidden_objects
+        full_dist, masked_dist = \
+            self.forward_step(full_features, masked_features, actions, mask)
+
+        dists = [full_dist, masked_dist]
+        result_dists = []
+        modes = ["full", "masked"]
+        for mode in forward_mode:
+            # [(bs, num_colors)] * num_hidden_objects
+            dist = dists[modes.index(mode)]
+            result_dists.append(dist)
+        if len(forward_mode) == 1:
+            return result_dists[0]
+
+        return result_dists
 
     def preprocess(self, obs):
         """
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
-        :return o: (bs, seq_len,  num_observables * num_colors)
+        :return o: [[(bs, num_colors)] * num_observables] * seq_len
                 a: (bs, seq_len, num_observables)
                 ot: [(bs, seq_len, num_colors)] * (num_observables + num_objects)
                 r: (bs, seq_len, 1)
@@ -933,10 +1217,14 @@ class Encoder(nn.Module):
         # [(bs, seq_len, num_colors)] * num_observables
         o = [F.one_hot(obs[k].squeeze().long(), i).float()
              for k, i in zip(self.o_keys, self.o_inner_dim)]
-        # (bs, seq_len, num_observables * num_colors)
-        o = torch.cat(o, dim=-1)
+        # [[(bs, num_colors)] * seq_len] * num_observables
+        o = [torch.unbind(o_i, dim=1) for o_i in o]
+        # [[(bs, num_colors)] * num_observables] * seq_len
+        o = [list(o_t) for o_t in zip(*o)]
+
         # (bs, seq_len, num_observables)
         a = F.one_hot(obs[self.a_key].squeeze().long(), self.a_inner_dim).float()
+
         # [(bs, seq_len, num_colors)] * (num_observables + num_objects)
         ot = [F.one_hot(obs[k].squeeze().long(), i).float()
               for k, i in zip(self.ot_keys, self.ot_inner_dim)]
@@ -964,12 +1252,71 @@ class Encoder(nn.Module):
             sample = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
         return sample
 
+    # def forward(self, obs):
+    #     """
+    #     :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+    #     :return z / z_probs: (bs, seq_len, num_colors)
+    #             x: (bs, seq_len, num_observables * num_colors)
+    #             u: (bs, seq_len, num_observables)
+    #             st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
+    #             r: (bs, seq_len - 2, 1)
+    #     """
+    #     o, a, ot, r = self.preprocess(obs)
+    #     x = o
+    #     u = torch.zeros_like(a)
+    #     u[:, 1:] = a[:, :-1]
+    #     bs, seq_len = x.shape[:2]
+    #
+    #     # assume 1 hidden object
+    #     z_probs = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+    #     z = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+    #
+    #     # x_{t:T}, u_{t:T} -> g_t;
+    #     # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
+    #     # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
+    #     x_tm1 = torch.zeros_like(x)
+    #     x_tm1[:, 1:] = x[:, :-1]
+    #     u_tm1 = torch.zeros_like(u)
+    #     u_tm1[:, :-1] = u[:, 1:]
+    #     # xu = torch.cat((x, u_tm1), -1)
+    #     xu = torch.cat((x[:, :, 2 * self.num_colors: 3 * self.num_colors],
+    #                     x_tm1[:, :, 2 * self.num_colors: 3 * self.num_colors], u), -1)
+    #     g, _ = self.rnn_g(torch.flip(xu, [1]))
+    #     g = torch.flip(g, [1])
+    #     for t in range(1, seq_len):
+    #         # if t == 1:
+    #         #     # m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
+    #         #     # zxu = torch.cat((z[:, t - 1], 0 * x[:, t - 1], u[:, t - 1]), -1)
+    #         #     # z_probs[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
+    #         #     # z[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
+    #         # else:
+    #         #     # zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
+    #         #     zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
+    #
+    #         zxu = torch.cat((x[:, t - 1][:, 2*self.num_colors: 3*self.num_colors],
+    #                          x[:, t][:, 2*self.num_colors: 3*self.num_colors], u[:, t]), -1)
+    #         m = self.mlp_m(zxu)
+    #         # mg = (m + g[:, t]) / 2
+    #         # mg = g[:, t-1]
+    #         # mg = torch.cat((m, g[:, t]), -1)
+    #         # (bs, num_colors)
+    #         n = self.cf_n(m)
+    #         z_probs[:, t] = F.softmax(n / 1, dim=-1)
+    #         z[:, t] = self.reparam(n)  # z_t
+    #
+    #     # state + target / reward: t=2 to T-1
+    #     # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
+    #     st = ([ot_i[:, 1:-1] for ot_i in ot[:self.hidden_objects_ind[0]]] + [z[:, 2:]]
+    #           + [ot_i[:, 1:-1] for ot_i in ot[self.hidden_objects_ind[0]:]])
+    #     r = r[:, :-2]
+    #     return z, z_probs, x, u, st, r
+
     def forward(self, obs):
         """
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
-        :return z / z_probs: (bs, seq_len, num_colors)
-                x: (bs, seq_len, num_observables * num_colors)
-                u: (bs, seq_len, num_observables)
+        :return z / z_logits: (bs, seq_len, num_colors)
+                x: [[(bs, num_colors)] * num_observables] * seq_len
+                u: [(bs, num_observables)] * seq_len
                 st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
                 r: (bs, seq_len - 2, 1)
         """
@@ -977,47 +1324,27 @@ class Encoder(nn.Module):
         x = o
         u = torch.zeros_like(a)
         u[:, 1:] = a[:, :-1]
-        bs, seq_len = x.shape[:2]
+        # [(bs, num_observables)] * seq_len
+        u = torch.unbind(u, dim=1)
 
         # assume 1 hidden object
-        z_probs = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+        bs, seq_len = a.shape[:2]
+        z_logits = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
         z = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
 
-        # x_{t:T}, u_{t:T} -> g_t;
-        # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
-        # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
-        x_tm1 = torch.zeros_like(x)
-        x_tm1[:, 1:] = x[:, :-1]
-        u_tm1 = torch.zeros_like(u)
-        u_tm1[:, :-1] = u[:, 1:]
-        # xu = torch.cat((x, u_tm1), -1)
-        xu = torch.cat((x[:, :, 2 * self.num_colors: 3 * self.num_colors],
-                        x_tm1[:, :, 2 * self.num_colors: 3 * self.num_colors], u), -1)
-        g, _ = self.rnn_g(torch.flip(xu, [1]))
-        g = torch.flip(g, [1])
-        for t in range(1, seq_len):
-            # if t == 1:
-            #     # m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
-            #     # zxu = torch.cat((z[:, t - 1], 0 * x[:, t - 1], u[:, t - 1]), -1)
-            #     # z_probs[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
-            #     # z[:, t] = F.one_hot(torch.full((bs,), 1), self.num_colors).float()
-            # else:
-            #     # zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
-            #     zxu = torch.cat((z[:, t - 1], x[:, t - 2], u[:, t - 1]), -1)
-            zxu = torch.cat((x[:, t - 1][:, 2*self.num_colors: 3*self.num_colors],
-                             x[:, t][:, 2*self.num_colors: 3*self.num_colors], u[:, t]), -1)
-            m = self.mlp_m(zxu)
-            # mg = (m + g[:, t]) / 2
-            # mg = g[:, t-1]
-            # mg = torch.cat((m, g[:, t]), -1)
-            # (bs, num_colors)
-            n = self.cf_n(m)
-            z_probs[:, t] = F.softmax(n / 1, dim=-1)
-            z[:, t] = self.reparam(n)  # z_t
+        mask = torch.tensor([[0, 1, 0, 1, 1]], dtype=torch.bool).to(self.device)
+        # mask = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 1, 1]], dtype=torch.bool).to(self.device)
+        mask = mask.repeat(bs, 1, 1).to(self.device)
 
-        # state + target / reward: t=2 to T-1
+        for t in range(1, seq_len):
+            # (bs, num_colors)
+            z_logit = self.forward_with_feature(x[t - 1] + x[t], u[t], mask=mask, forward_mode=("masked",))[0]
+            z_logits[:, t] = z_logit
+            z[:, t] = self.reparam(z_logit)  # z_t
+
+        # state + target / reward: t=1 to T-1
         # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
-        st = ([ot_i[:, 1:-1] for ot_i in ot[:self.hidden_objects_ind[0]]] + [z[:, 2:]]
-              + [ot_i[:, 1:-1] for ot_i in ot[self.hidden_objects_ind[0]:]])
-        r = r[:, :-2]
-        return z, z_probs, x, u, st, r
+        st = ([ot_i[:, :-1] for ot_i in ot[:self.hidden_objects_ind[0]]] + [z[:, 1:]]
+              + [ot_i[:, :-1] for ot_i in ot[self.hidden_objects_ind[0]:]])
+        r = r[:, :-1]
+        return z, z_logits, x, u, st, r

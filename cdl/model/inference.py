@@ -97,7 +97,7 @@ class Inference(nn.Module):
         list of distribution at different time steps to a single distribution stacked at dim=-2
         :param dist_list:
             if state space is continuous: [Normal] * n_pred_step, each of shape (bs, feature_dim)
-            else: [[OneHotCategorical / Normal]  * feature_dim] * n_pred_step, each of shape (bs, feature_i_dim)
+            else: [[OneHotCategorical / Normal] * feature_dim] * n_pred_step, each of shape (bs, feature_i_dim)
             notice that bs can be a multi-dimensional batch size
         :return:
             if state space is continuous: Normal distribution of shape (bs, n_pred_step, feature_dim)
@@ -120,6 +120,9 @@ class Inference(nn.Module):
                     # (bs, n_pred_step, feature_i_dim)
                     logits = torch.stack([dist[i].logits for dist in dist_list], dim=-2)
                     stacked_dist_i = OneHotCategorical(logits=logits)
+                elif isinstance(dist_i, torch.Tensor):
+                    # (bs, n_pred_step, feature_i_dim)
+                    stacked_dist_i = torch.stack([dist[i] for dist in dist_list], dim=-2)
                 else:
                     raise NotImplementedError
                 stacked_dist_list.append(stacked_dist_i)
@@ -267,10 +270,10 @@ class Inference(nn.Module):
         :return: (bs, n_pred_step, feature_dim) if keep_variable_dim else (bs, n_pred_step)
         """
         if loss_type == "recon" or loss_type == "recon_h":
-            if self.continuous_state:
-                next_feature = next_feature.detach()
-            else:
-                next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+            # if self.continuous_state:
+            #     next_feature = next_feature.detach()
+            # else:
+            #     next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
             # (bs, n_pred_step, num_observables/num_hidden)
             pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
         elif loss_type == "kl":
