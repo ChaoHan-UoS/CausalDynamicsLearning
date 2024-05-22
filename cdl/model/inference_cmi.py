@@ -478,7 +478,8 @@ class InferenceCMI(Inference):
         """
         # For MLP encoder
         # (bs, seq_len - 1, num_objects * num_colors)
-        feature = torch.cat((x[:, :-1], z[:, 1:]), dim=-1)
+        feature = torch.cat((x[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
+                             z[:, 1:], x[:, :-1, self.hidden_objects_ind[-1] * self.num_colors:]), dim=-1)
         # [(bs, num_objects * num_colors)] * (seq_len - 1)
         feature = torch.unbind(feature, dim=1)
         # states from t=1 to T-1

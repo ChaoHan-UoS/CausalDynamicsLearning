@@ -38,7 +38,7 @@
             "hidden_objects_ind": [2],
             "hidden_targets_ind": [],
             "num_objects": 5,
-            "num_colors": 3,
+            "num_colors": 5,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -49,7 +49,7 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 5,
+            "max_steps": 3,
             "num_target_interventions": 3,
             "g": "chain5",
             "match_type": "all",
@@ -80,7 +80,7 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 5
+            "stack_num": 3
         }
     },
     "encoder_params": {
