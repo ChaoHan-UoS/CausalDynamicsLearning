@@ -38,7 +38,7 @@
             "hidden_objects_ind": [2],
             "hidden_targets_ind": [],
             "num_objects": 5,
-            "num_colors": 5,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -49,7 +49,7 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 3,
+            "max_steps": 5,
             "num_target_interventions": 3,
             "g": "chain5",
             "match_type": "all",
@@ -80,15 +80,15 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 3
+            "stack_num": 5
         }
     },
     "encoder_params": {
         "encoder_freq": 0,
-        "dim_rnn_g": 64,
+        "dim_rnn_g": 256,
         "num_rnn_g": 1,
-        "dims_mlp_m": [256, 256, 256],
-        "dims_cf_n": [64],
+        "dims_mlp_m": [128],
+        "dims_cf_n": [256, 256],
         "dropout_p": 0,
         "gumbel_softmax_params": {
             "gumbel_temp_0": 5,
