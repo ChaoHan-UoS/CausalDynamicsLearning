@@ -357,10 +357,15 @@ def train(params):
                 # list of dict to dict of list
                 if isinstance(module_loss_detail, list):
                     keys = set().union(*[dic.keys() for dic in module_loss_detail])
-                    module_loss_detail = {k: [dic[k].item() for dic in module_loss_detail if k in dic]
+                    module_loss_detail = {k: [dic[k] for dic in module_loss_detail if k in dic]
                                           for k in keys if k not in ["priority"]}
                 for loss_name, loss_values in module_loss_detail.items():
-                    writer.add_scalar("{}/{}".format(module_name, loss_name), np.mean(loss_values), step)
+                    if isinstance(loss_values[0], dict):
+                        writer.add_scalars("{}/{}".format(module_name, loss_name),
+                                           loss_values[0], step)
+                    else:
+                        writer.add_scalar("{}/{}".format(module_name, loss_name),
+                                          torch.mean(torch.stack(loss_values).float(), 0), step)
 
             if (step + 1) % training_params.plot_freq == 0 and inference_gradient_steps > 0:
                 plot_adjacency_intervention_mask(params, inference, writer, step)

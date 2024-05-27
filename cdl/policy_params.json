@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [2],
+            "hidden_objects_ind": [2, 3],
             "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 3,
@@ -87,7 +87,7 @@
         "encoder_freq": 0,
         "dim_rnn_g": 256,
         "num_rnn_g": 1,
-        "dims_mlp_m": [128],
+        "dims_mlp_m": [256],
         "dims_cf_n": [256, 256],
         "dropout_p": 0,
         "gumbel_softmax_params": {

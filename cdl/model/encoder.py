@@ -875,7 +875,7 @@ class Encoder(nn.Module):
         self.feature_dim = self.num_objects
         self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
 
-        # hindsight encoder implemented as aggregate FNN
+        # hindsight-based encoder implemented by masked MLP
         self.feedforward_enc_params = params.encoder_params.feedforward_enc_params
         self.hind_feature_dim = 2 * self.num_obs_objects
         self.continuous_state = params.continuous_state
@@ -898,7 +898,7 @@ class Encoder(nn.Module):
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
         self.dims_cf_n = dims_cf_n = self.encoder_params.dims_cf_n
-        self.z_dim = z_dim = self.num_colors
+        self.z_dim = z_dim = self.num_hidden_objects * self.num_colors
         dropout_p = self.encoder_params.dropout_p
 
         # x_{t:T}, u_{t:T} -> g_t
@@ -1251,7 +1251,7 @@ class Encoder(nn.Module):
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
         :return o: (bs, seq_len,  num_observables * num_colors)
                 a: (bs, seq_len, num_observables)
-                ot: [(bs, seq_len, num_colors)] * (num_observables + num_objects)
+                ot: (bs, seq_len, (num_observables + num_objects) * num_colors)
                 r: (bs, seq_len, 1)
         """
         # [(bs, seq_len, num_colors)] * num_observables
@@ -1266,6 +1266,9 @@ class Encoder(nn.Module):
         # [(bs, seq_len, num_colors)] * (num_observables + num_objects)
         ot = [F.one_hot(obs[k].squeeze().long(), i).float()
               for k, i in zip(self.ot_keys, self.ot_inner_dim)]
+        # (bs, seq_len, (num_observables + num_colors) * num_colors)
+        ot = torch.cat(ot, dim=-1)
+
         # (bs, seq_len, 1)
         r = obs[self.r_key]
         return o, a, ot, r
@@ -1475,8 +1478,8 @@ class Encoder(nn.Module):
 
         # assume 1 hidden object
         bs, seq_len = a.shape[:2]
-        z_probs = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
-        z = torch.zeros((bs, seq_len, self.num_colors)).to(self.device)
+        z_probs = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
+        z = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
 
         # x_{t:T}, u_{t:T} -> g_t;
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
@@ -1493,22 +1496,29 @@ class Encoder(nn.Module):
 
         g = torch.flip(g, [1])
         for i in range(1, seq_len):
-            if i == 1:
-                m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
-            else:
-                zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
-                m = self.mlp_m(zxu)
+            # if i == 1:
+            #     m = torch.zeros((bs, self.dim_rnn_g)).to(self.device)
+            # else:
+            #     zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
+            #     m = self.mlp_m(zxu)
             # mg = (m + g[:, i]) / 2
             mg = g[:, i]
             # mg = torch.cat((m, g[:, i]), -1)
-            # (bs, num_colors)
+            # (bs, z_dim)
             n = self.cf_n(mg)
-            z_probs[:, i] = F.softmax(n / 1, dim=-1)
-            z[:, i] = self.reparam(n)
+            # [(bs, num_colors)] * num_hiddens
+            n = torch.split(n, self.num_colors, dim=-1)
+
+            z_i = [self.reparam(n_i) for n_i in n]
+            z[:, i] = torch.cat(z_i, dim=-1)
+            z_probs_i = [F.softmax(n_i / 1, dim=-1) for n_i in n]
+            z_probs[:, i] = torch.cat(z_probs_i, dim=-1)
 
         # state + target / reward: t=1 to T-1
+        # (bs, seq_len - 1, 2 * num_objects * num_colors)
+        st = torch.cat((ot[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
+                        z[:, 1:], ot[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
         # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
-        st = ([ot_i[:, :-1] for ot_i in ot[:self.hidden_objects_ind[0]]] + [z[:, 1:]]
-              + [ot_i[:, :-1] for ot_i in ot[self.hidden_objects_ind[0]:]])
+        st = torch.split(st, self.num_colors, dim=-1)
         r = r[:, :-1]
         return z, z_probs, x, u, st, r
