@@ -87,8 +87,8 @@
         "encoder_freq": 0,
         "dim_rnn_g": 256,
         "num_rnn_g": 1,
-        "dims_mlp_m": [256],
-        "dims_cf_n": [256, 256],
+        "dims_mlp_m": [256, 256, 256],
+        "dims_cf_n": [256],
         "dropout_p": 0,
         "gumbel_softmax_params": {
             "gumbel_temp_0": 5,
