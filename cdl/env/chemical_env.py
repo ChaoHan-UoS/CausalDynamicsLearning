@@ -269,14 +269,14 @@
 #         for i in range(1, len(dims)):
 #             self.layers.append(nn.Linear(dims[i-1], dims[i]))
 #             torch.nn.init.orthogonal_(self.layers[-1].weight.data, 3.0)
-#             torch.nn.init.uniform_(self.layers[-1].bias.data, -0.2, +0.2)
+#             torch.nn.init.uniform_(self.layers[-1].bias.data, -0.01, +0.01)
 #         self.layers = nn.ModuleList(self.layers)
 #
 #     def forward(self, x, mask):
 #         x = x * mask
 #         for i, l in enumerate(self.layers):
 #             if i == len(self.layers) - 1:
-#                 # x = torch.softmax(l(x), dim=1)  # stochastic transition
+#                 # x = F.softmax(l(x) / 0.1, dim=1)  # stochastic transition
 #                 x = F.one_hot(torch.argmax(l(x), dim=-1), l(x).size(-1)).float()  # deterministic transition
 #             else:
 #                 x = torch.relu(l(x))
@@ -346,9 +346,12 @@
 #             self.match_type = list(range(self.num_objects))
 #
 #         self.partial_obs_keys = params.obs_keys
-#         self.action_dim = chemical_env_params.num_objects
+#         # self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)]
+#         self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)
+#                                  if i not in chemical_env_params.hidden_objects_ind]
+#         self.action_dim = len(self.partial_act_dims)
 #
-#         mlp_dims = [self.num_objects * (self.num_colors + 1), 4 * self.num_objects, self.num_colors]
+#         mlp_dims = [self.num_objects * (self.num_colors + 1), 256, self.num_colors]
 #         self.mlps = [MLP(mlp_dims).to(device) for _ in range(self.num_objects)]
 #
 #         self.set_graph(chemical_env_params.g)
@@ -520,8 +523,12 @@
 #         act_inp = F.one_hot(torch.tensor(idx), self.num_objects).float()
 #         # (1, num_objects * (num_colors + 1))
 #         inp = torch.cat((obs_inp, act_inp), dim=0).unsqueeze(0)
+#         # (num_objects, num_objects)
+#         mask_act = act_inp.unsqueeze(-1).repeat(1, self.num_objects)
+#         # (num_objects, num_objects * (num_colors + 1))
+#         mask_ = torch.cat((self.mask[:, :-self.num_objects], mask_act), -1)
 #         for v in range(self.num_objects):
-#             mask = self.mask[v].unsqueeze(0)
+#             mask = mask_[v].unsqueeze(0)
 #             out = self.mlps[v](inp, mask)
 #             self.object_to_color_target[v] = out.squeeze(0)
 #
@@ -530,8 +537,12 @@
 #         act_inp = F.one_hot(torch.tensor(idx), self.num_objects).float()
 #         # (1, num_objects * (num_colors + 1))
 #         inp = torch.cat((obs_inp, act_inp), dim=0).unsqueeze(0)
+#         # (num_objects, num_objects)
+#         mask_act = act_inp.unsqueeze(-1).repeat(1, self.num_objects)
+#         # (num_objects, num_objects * (num_colors + 1))
+#         mask_ = torch.cat((self.mask[:, :-self.num_objects], mask_act), -1)
 #         for v in range(self.num_objects):
-#             mask = self.mask[v].unsqueeze(0)
+#             mask = mask_[v].unsqueeze(0)
 #             out = self.mlps[v](inp, mask)
 #             self.object_to_color[v] = out.squeeze(0)
 #
@@ -539,8 +550,8 @@
 #         self.actions_to_target = []
 #         # temp = copy.deepcopy(self.object_to_color_target)
 #         for i in range(num_steps):
-#             intervention_id = self.np_random.choice(self.action_dim)
-#             # self.actions_to_target.append(intervention_id)
+#             intervention_id = self.np_random.choice(self.partial_act_dims)
+#             self.actions_to_target.append(intervention_id)
 #             ########################################################
 #             # print(f"ACTIONS_TO_TARGET AT STEP {i}")
 #             # print(self.actions_to_target[-1])
@@ -634,7 +645,22 @@
 #             obj.color = to_numpy(self.object_to_color[idx].argmax())
 #
 #     def step(self, action: int):
-#         self.translate(action)
+#         matches = 0.
+#         for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
+#             if i not in self.match_type:
+#                 continue
+#             if (c1 == c2).all():
+#                 matches += 1
+#
+#         num_needed_match = len(self.match_type)
+#         if self.dense_reward:
+#             reward = matches / num_needed_match
+#         else:
+#             reward = float(matches == num_needed_match)
+#         info = {"success": matches == num_needed_match}
+#
+#         partial_action = self.partial_act_dims[action]
+#         self.translate(partial_action)
 #
 #         if self.continuous_pos:
 #             for _, obj in self.objects.items():
@@ -650,20 +676,6 @@
 #                 if self.valid_pos(new_pos, idx):
 #                     obj.pos = new_pos
 #                     break
-#
-#         matches = 0.
-#         for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
-#             if i not in self.match_type:
-#                 continue
-#             if (c1 == c2).all():
-#                 matches += 1
-#
-#         num_needed_match = len(self.match_type)
-#         if self.dense_reward:
-#             reward = matches / num_needed_match
-#         else:
-#             reward = float(matches == num_needed_match)
-#         info = {"success": matches == num_needed_match}
 #
 #         self.cur_step += 1
 #
@@ -949,59 +961,6 @@ def random_dag(M, N, rng, g=None):
         return gammagt
 
 
-# class SCE(nn.Module):
-#     """Structural Causal Equations of Markovian transition implemented by MLPs"""
-#     def __init__(self, dims):
-#         super().__init__()
-#         self.layers = []
-#         for i in range(1, len(dims)):
-#             self.layers.append(nn.Linear(dims[i-1], dims[i]))
-#             torch.nn.init.orthogonal_(self.layers[-1].weight.data, 3.0)
-#             torch.nn.init.uniform_(self.layers[-1].bias.data, -0.2, +0.2)
-#         self.layers = nn.ModuleList(self.layers)
-#
-#     def forward(self, x, mask):
-#         x = x * mask
-#         for i, l in enumerate(self.layers):
-#             if i == len(self.layers) - 1:
-#                 x = torch.softmax(l(x), dim=1)
-#             else:
-#                 x = torch.relu(l(x))
-#         x = torch.distributions.one_hot_categorical.OneHotCategorical(probs=x).sample()
-#         return x
-#
-#     def forward(self, s, idx, mask):
-#         """
-#         :param s: current one-hot colors of all objects, [(num_colors)] * num_objects
-#         :param idx: current intervened object index, int
-#         :param mask: adjacency matrix
-#         :return: next one-hot colors of a object
-#         """
-#         s_0 = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
-#         a_0 = F.one_hot(torch.tensor(idx), len(s)).float()
-#         x_0 = torch.matmul(mask, s_0) + a_0
-#
-#         for i, l in enumerate(self.layers):
-#             if i == len(self.layers) - 1:
-#                 x_0 = torch.softmax(l(x_0), dim=1)
-#             else:
-#                 x_0 = torch.relu(l(x_0))
-#         x_1 = torch.distributions.one_hot_categorical.OneHotCategorical(probs=x_0).sample()
-#         return x_1
-#
-#
-#     def sce(self, s, idx):
-#         s_t = torch.tensor([i.argmax().item() for i in s], dtype=torch.float32)
-#         a_t = F.one_hot(torch.tensor(idx), self.num_objects).float()
-#
-#         s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)  # one-step transition
-#         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
-#         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
-#
-#         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
-#         return s_t1
-
-
 @dataclass
 class Object:
     pos: Coord
@@ -1078,9 +1037,6 @@ class Chemical(gym.Env):
 
         self.objects = OrderedDict()
 
-        # mlp_dims = [self.num_objects * self.num_colors, 4 * self.num_objects, self.num_colors]
-        # self.sce = [SCE(mlp_dims).to(device) for _ in range(self.num_objects)]
-
         self.reset()
 
     def sce(self, s, idx):
@@ -1104,9 +1060,11 @@ class Chemical(gym.Env):
         # h = torch.zeros_like(a_t)
         # h[0] = 1
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
-        s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + a_t, self.num_colors)
+        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t + a_t), self.num_colors)
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
+        s_t1 = torch.matmul(self.adjacency_matrix, s_t + a_t) // torch.sum(self.adjacency_matrix, dim=1)
+        s_t1 = torch.fmod(s_t1, self.num_colors)
 
         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
         return s_t1
