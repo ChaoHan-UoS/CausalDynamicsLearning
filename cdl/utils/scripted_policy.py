@@ -11,6 +11,7 @@ def get_is_demo(step, params):
     demo_prob_init = params.scripted_policy_params.demo_prob_init
     demo_prob_final = params.scripted_policy_params.demo_prob_final
     demo_prob = demo_prob_init + (demo_prob_final - demo_prob_init) * demo_annealing_coef
+    # demo_prob = 0.8
     return np.random.random() < demo_prob
 
 
@@ -149,6 +150,7 @@ class ScriptedChemical:
 
     def act_randomly(self,):
         return np.random.randint(self.action_dim)
+        # return 1
         # below for collecting dense graph only
         # p = np.concatenate([[i * 0.5 + 1.0] * 5 for i in range(10)])
         # p /= p.sum()

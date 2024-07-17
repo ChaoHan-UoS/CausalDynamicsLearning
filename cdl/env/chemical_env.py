@@ -1060,11 +1060,13 @@ class Chemical(gym.Env):
         # h = torch.zeros_like(a_t)
         # h[0] = 1
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
-        # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t + a_t), self.num_colors)
+        s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-1, 0, 1], p=[0, 1, 0])
+        s_[s_ < 0] = self.num_colors - 1
+        s_t1 = torch.fmod(s_, self.num_colors)
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
-        # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) + a_t) // (torch.sum(self.adjacency_matrix, dim=1) + a_t)
-        s_t1 = torch.matmul(self.adjacency_matrix, s_t + a_t) // torch.sum(self.adjacency_matrix, dim=1)
-        s_t1 = torch.fmod(s_t1, self.num_colors)
+        # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) // torch.sum(self.adjacency_matrix, dim=1)) + a_t
+        # s_t1 = torch.matmul(self.adjacency_matrix, s_t + a_t) // torch.sum(self.adjacency_matrix, dim=1)
+        # s_t1 = torch.fmod(s_t1, self.num_colors)
 
         s_t1 = list(torch.unbind(F.one_hot(s_t1.long(), self.num_colors).float()))
         return s_t1
@@ -1317,18 +1319,25 @@ class Chemical(gym.Env):
 
     def step(self, action: int):
         matches = 0.
+        l1 = 0.
         for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
             if i not in self.match_type:
                 continue
             if (c1 == c2).all():
                 matches += 1
+            # c1 = torch.argmax(c1).item()
+            # c2 = torch.argmax(c2).item()
+            # l1 += abs(c1 - c2)
 
         num_needed_match = len(self.match_type)
         if self.dense_reward:
             reward = matches / num_needed_match
+            # reward = l1
         else:
             reward = float(matches == num_needed_match)
+            # reward = float(l1 == 0)
         info = {"success": matches == num_needed_match}
+        # info = {"success": l1 == 0}
 
         partial_action = self.partial_act_dims[action]
         obj_id = partial_action

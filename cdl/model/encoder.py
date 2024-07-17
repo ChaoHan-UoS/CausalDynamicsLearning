@@ -123,7 +123,7 @@ class RNN(nn.Module):
             # h_l0 = self.layer_norm(h_l0)
             h_l0 = self.dropout(h_l0)
 
-            # second lstm layer
+            # second lstm layero
             h_l1, c_l1 = self.lstmcell2(h_l0, (h_l1, c_l1))
             # h_l1 = self.layer_norm(h_l1)
             h_l1 = self.dropout(h_l1)
@@ -897,6 +897,7 @@ class Encoder(nn.Module):
         self.zxu_dim = zxu_dim = self.z_dim + self.o_inner_dim.sum() + self.a_inner_dim
         # self.zxu_dim = zxu_dim = 2 * self.num_colors + self.a_inner_dim
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
+        self.xxuz_dim = xxuz_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + self.z_dim
         self.hh_dim = hh_dim = 2 * self.num_colors
         self.xz_dim = xz_dim = 2 * (self.o_inner_dim.sum() + self.num_colors)
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
@@ -906,6 +907,7 @@ class Encoder(nn.Module):
 
         # x_{t:T}, u_{t:T} -> g_t
         self.rnn_g = nn.LSTM(xxu_dim, dim_rnn_g, num_rnn_g, batch_first=True)
+        # self.rnn_g = nn.LSTM(xxuz_dim, dim_rnn_g, num_rnn_g, batch_first=True)
         # self.rnn_g = nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True)
 
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t
@@ -956,8 +958,8 @@ class Encoder(nn.Module):
         dic_layers = OrderedDict()
         for n in range(len(dims_cf_n)):
             if n == 0:
-                # dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
-                dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
+                dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                # dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
             else:
                 dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
             dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
@@ -1312,11 +1314,11 @@ class Encoder(nn.Module):
             sample = F.one_hot(torch.argmax(logits, dim=-1), logits.size(-1)).float()
         return sample
 
-    def forward(self, obs):
+    def forward(self, obs, forward_with_feature):
         """
-        full DVAE encoder using markovian forward info
+        full DVAE encoder using markovian forward info and fixed horizon of future info
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
-        :return z / z_probs: (bs, seq_len, num_colors)
+        :return z / z_probs: (bs, seq_len, num_hiddens * num_colors)
                 x: (bs, seq_len, num_observables * num_colors)
                 u: (bs, seq_len, num_observables)
                 st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
@@ -1336,21 +1338,43 @@ class Encoder(nn.Module):
         # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
         x_tm1 = torch.zeros_like(x)
         x_tm1[:, 1:] = x[:, :-1]
-        # (bs, seq_len, 2 * num_observables * num_colors + num_observables)
-        xxu = torch.cat((x_tm1, x, u), -1)
-        g, _ = self.rnn_g(torch.flip(xxu, [1]))
-        g = torch.flip(g, [1])
-        for i in range(1, seq_len):
-            if i == 1:
-                zxu = torch.zeros((bs, self.zxu_dim)).to(self.device)
-            else:
-                zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
-            m = self.mlp_m(zxu)
-            # mg = (m + g[:, i]) / 2
-            # mg = g[:, i - 1]
-            mg = torch.cat((m, g[:, i]), -1)
+        for i in range(1, seq_len - 1):
+            # h_rnn = torch.zeros(self.num_rnn_g, bs, self.dim_rnn_g).to(self.device)
+            # c_rnn = torch.zeros(self.num_rnn_g, bs, self.dim_rnn_g).to(self.device)
+            # z_j = torch.zeros(bs, 1, self.z_dim).to(self.device)
+            # # 2-step future info from j = 1 to 0
+            # for j in range(1, -1, -1):
+            #     # (bs, 1, 2 * num_observables * num_colors + num_observables + z_dim)
+            #     xxuz = torch.cat((x_tm1[:, (i+j):(i+j+1)], x[:, (i+j):(i+j+1)],
+            #                      u[:, (i+j):(i+j+1)], z_j), -1)
+            #     g, (h_rnn, c_rnn) = self.rnn_g(xxuz, (h_rnn, c_rnn))
+            #     # (bs, z_dim)
+            #     n = self.cf_n(g[:, 0])
+            #     z_j = n.unsqueeze(1)
+            # # [(bs, num_colors)] * num_hiddens
+            # n = torch.split(n, self.num_colors, dim=-1)
+            # z_j = [self.reparam(n_i) for n_i in n]
+            # # (bs, 1, z_dim)
+            # z_j = torch.cat(z_j, dim=-1).unsqueeze(1)
+            # z[:, i] = z_j.squeeze(1)
+            # z_probs_i = [F.softmax(n_i / 1, dim=-1) for n_i in n]
+            # z_probs[:, i] = torch.cat(z_probs_i, dim=-1)
+
+            # (bs, 2, 2 * num_observables * num_colors + num_observables)
+            xxu = torch.cat((x_tm1[:, i:(i + 2)], x[:, i:(i + 2)], u[:, i:(i + 2)]), -1)
+            g, _ = self.rnn_g(torch.flip(xxu, [1]))
+            g = torch.flip(g, [1])
             # (bs, z_dim)
-            n = self.cf_n(mg)
+            n = self.cf_n(g[:, 0])
+
+            # if i > 1:
+            #     # [(bs, 1, num_colors)] * num_hiddens
+            #     m = forward_with_feature(x[:, (i-2):(i-1)], z[:, (i-1):i], u[:, (i-1):i],
+            #                              forward_mode=("full",))[1]
+            #     # (bs, z_dim)
+            #     m = torch.cat(m, -1).squeeze(1)
+            #     n = (m + n) / 2
+
             # [(bs, num_colors)] * num_hiddens
             n = torch.split(n, self.num_colors, dim=-1)
 
@@ -1367,6 +1391,63 @@ class Encoder(nn.Module):
         st = torch.split(st, self.num_colors, dim=-1)
         r = r[:, :-1]
         return z, z_probs, x, u, st, r
+
+    # def forward(self, obs):
+    #     """
+    #     full DVAE encoder using markovian forward info
+    #     :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+    #     :return z / z_probs: (bs, seq_len, num_hiddens * num_colors)
+    #             x: (bs, seq_len, num_observables * num_colors)
+    #             u: (bs, seq_len, num_observables)
+    #             st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
+    #             r: (bs, seq_len - 2, 1)
+    #     """
+    #     o, a, ot, r = self.preprocess(obs)
+    #     x = o
+    #     u = torch.zeros_like(a)
+    #     u[:, 1:] = a[:, :-1]
+    #
+    #     bs, seq_len = a.shape[:2]
+    #     z_probs = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
+    #     z = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
+    #
+    #     # x_{t:T}, u_{t:T} -> g_t;
+    #     # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
+    #     # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
+    #     x_tm1 = torch.zeros_like(x)
+    #     x_tm1[:, 1:] = x[:, :-1]
+    #     # (bs, seq_len, 2 * num_observables * num_colors + num_observables)
+    #     xxu = torch.cat((x_tm1, x, u), -1)
+    #     g, _ = self.rnn_g(torch.flip(xxu, [1]))
+    #     g = torch.flip(g, [1])
+    #     for i in range(1, seq_len):
+    #         if i == 1:
+    #             zxu = torch.zeros((bs, self.zxu_dim)).to(self.device)
+    #         else:
+    #             zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
+    #         m = self.mlp_m(zxu)
+    #         # mg = (m + g[:, i]) / 2
+    #         # mg = g[:, i - 1]
+    #         m = torch.zeros_like(m)
+    #         mg = torch.cat((m, g[:, i]), -1)
+    #         # (bs, z_dim)
+    #         n = self.cf_n(mg)
+    #         # [(bs, num_colors)] * num_hiddens
+    #         n = torch.split(n, self.num_colors, dim=-1)
+    #
+    #         z_i = [self.reparam(n_i) for n_i in n]
+    #         z[:, i] = torch.cat(z_i, dim=-1)
+    #         z_probs_i = [F.softmax(n_i / 1, dim=-1) for n_i in n]
+    #         z_probs[:, i] = torch.cat(z_probs_i, dim=-1)
+    #
+    #     # state + target / reward: t=1 to T-1
+    #     # (bs, seq_len - 1, 2 * num_objects * num_colors)
+    #     st = torch.cat((ot[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
+    #                     z[:, 1:], ot[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
+    #     # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
+    #     st = torch.split(st, self.num_colors, dim=-1)
+    #     r = r[:, :-1]
+    #     return z, z_probs, x, u, st, r
 
     # def forward(self, obs):
     #     """

@@ -136,6 +136,63 @@ def rotanimate(ax, angles, output, **kwargs):
         os.remove(f)
 
 
+# def plot_adjacency_intervention_mask(params, model, writer, step):
+#     adjacency_lb, adjacency_ub = model.get_adjacency()
+#     intervention_mask_lb, intervention_mask_ub = model.get_intervention_mask()
+#     adjacency_lb, adjacency_ub = to_numpy(adjacency_lb), to_numpy(adjacency_ub)
+#     intervention_mask_lb, intervention_mask_ub = to_numpy(intervention_mask_lb), to_numpy(intervention_mask_ub)
+#     adjacency_intervention_lb = np.concatenate([adjacency_lb, intervention_mask_lb], axis=-1)
+#     adjacency_intervention_ub = np.concatenate([adjacency_ub, intervention_mask_ub], axis=-1)
+#
+#     obs_keys = params.obs_keys
+#     obs_spec = params.obs_spec
+#     feature_dim, action_dim = intervention_mask_lb.shape
+#
+#     fig = plt.figure(figsize=((feature_dim + action_dim) * 0.45 + 2, feature_dim * 0.45 + 2))
+#     fig, axes = plt.subplots(1, 2, figsize=((feature_dim + action_dim) * 0.45 * 2 + 4, feature_dim * 0.45 + 2))
+#
+#     use_cmi = params.training_params.inference_algo == "cmi"
+#     vmax = params.inference_params.cmi_params.CMI_threshold if use_cmi else 1.0
+#     if vmax < 0.01:
+#         vmax = vmax * 100
+#         adjacency_intervention_lb = adjacency_intervention_lb * 100
+#         adjacency_intervention_ub = adjacency_intervention_ub * 100
+#
+#     # Plot the lower bound heatmap
+#     sns.heatmap(adjacency_intervention_lb, linewidths=1, vmin=0, vmax=vmax, square=True, annot=True, fmt='.2f',
+#                 cbar=False, ax=axes[0])
+#     axes[0].set_title("Adjacency Intervention LB")
+#     # Plot the upper bound heatmap
+#     sns.heatmap(adjacency_intervention_ub, linewidths=1, vmin=0, vmax=vmax, square=True, annot=True, fmt='.2f',
+#                 cbar=False, ax=axes[1])
+#     axes[1].set_title("Adjacency Intervention UB")
+#
+#     for ax in axes:
+#         ax.tick_params(axis="x", bottom=True, top=True, labelbottom=True, labeltop=True)
+#         if params.encoder_params.encoder_type == "identity":
+#             tick_loc = []
+#             cum_idx = 0
+#             for k in obs_keys:
+#                 obs_dim = obs_spec[k].shape[0]
+#                 tick_loc.append(cum_idx + obs_dim * 0.5)
+#                 cum_idx += obs_dim
+#                 ax.vlines(cum_idx, ymin=0, ymax=feature_dim, colors='blue', linewidths=3)
+#                 if k != obs_keys[-1]:
+#                     ax.hlines(cum_idx, xmin=0, xmax=feature_dim + action_dim, colors='blue', linewidths=3)
+#
+#             ax.set_xticks(tick_loc + [feature_dim + 0.5 * action_dim])
+#             ax.set_xticklabels(obs_keys + ["action"], rotation=0)
+#             ax.set_yticks(tick_loc)
+#             ax.set_yticklabels(obs_keys, rotation=0)
+#         else:
+#             ax.vlines(feature_dim, ymin=0, ymax=feature_dim, colors='blue', linewidths=3)
+#             ax.set_xticks([0.5 * feature_dim, feature_dim + 0.5 * action_dim])
+#             ax.set_xticklabels(["feature", "action"], rotation=0)
+#
+#     fig.tight_layout()
+#     writer.add_figure("adjacency", fig, step + 1)
+#     plt.close("all")
+
 def plot_adjacency_intervention_mask(params, model, writer, step):
     adjacency = model.get_adjacency()
     intervention_mask = model.get_intervention_mask()

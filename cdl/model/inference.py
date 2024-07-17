@@ -270,10 +270,10 @@ class Inference(nn.Module):
         :return: (bs, n_pred_step, feature_dim) if keep_variable_dim else (bs, n_pred_step)
         """
         if loss_type == "recon" or loss_type == "recon_h":
-            # if self.continuous_state:
-            #     next_feature = next_feature.detach()
-            # else:
-            #     next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+            if self.continuous_state:
+                next_feature = next_feature.detach()
+            else:
+                next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
             # (bs, n_pred_step, num_observables/num_hidden)
             pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
         elif loss_type == "kl":

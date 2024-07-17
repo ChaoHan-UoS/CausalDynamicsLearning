@@ -35,10 +35,10 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [2],
+            "hidden_objects_ind": [2, 3],
             "hidden_targets_ind": [],
             "num_objects": 5,
-            "num_colors": 5,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -49,7 +49,7 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 6,
+            "max_steps": 4,
             "num_target_interventions": 3,
             "g": "chain5",
             "match_type": "all",
@@ -80,15 +80,15 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 6
+            "stack_num": 4
         }
     },
     "encoder_params": {
         "encoder_freq": 0,
-        "dim_rnn_g": 256,
+        "dim_rnn_g": 128,
         "num_rnn_g": 1,
-        "dims_mlp_m": [256],
-        "dims_cf_n": [256, 256],
+        "dims_mlp_m": [128],
+        "dims_cf_n": [64, 64],
         "dropout_p": 0,
         "gumbel_softmax_params": {
             "gumbel_temp_0": 5,
@@ -136,10 +136,10 @@
             "generative_fc_dims": [64, 64],
             "causal_pred_reward_weight": 0.0,
             "pred_diff_reward_weight": 1.0,
-            "eval_tau": 0.999,
+            "eval_tau": 0.99,
             "eval_freq": 200,
             "eval_steps": 1,
-            "eval_batch_size": 64,
+            "eval_batch_size": 128,
             "CMI_threshold": 0.03,
             "hinge": 10
         },
