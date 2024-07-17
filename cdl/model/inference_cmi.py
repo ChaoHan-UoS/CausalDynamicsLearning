@@ -885,17 +885,18 @@ class InferenceCMI(Inference):
         # x_dists: [[OneHotCategorical(bs, seq_len - 2, num_colors)] * num_observables] * len(forward_mode)
         # z_dists: [[(bs, seq_len - 2, num_colors)] * num_hiddens] * len(forward_mode)
         next_x_dists, next_z_prior_dists = self.forward_with_feature(x, z, u, mask, forward_mode=forward_mode)
-        # next_x_dists = [[OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in forward_mode_i]
-        #                 for forward_mode_i in next_x_dists]
         # t=2 to T-2
+        # [[OneHotCategorical(bs, seq_len - 3, num_colors)] * num_observables] * len(forward_mode)
+        next_x_dists = [[OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in forward_mode_i]
+                        for forward_mode_i in next_x_dists]
         # [[OneHotCategorical(bs, seq_len - 3, num_colors)] * num_hiddens] * len(forward_mode)
         next_z_prior_dists = [[OneHotCategorical(probs=dist_i[:, :-1]) for dist_i in forward_mode_i]
                               for forward_mode_i in next_z_prior_dists]
 
         # For MLP encoder
-        # true next observables from t=2 to T-1
-        # [(bs, seq_len - 2, num_colors)] * num_observables
-        next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
+        # true next observables from t=2 to T-2
+        # [(bs, seq_len - 3, num_colors)] * num_observables
+        next_x = torch.split(x[:, 1:-2], self.num_colors, dim=-1)
         # inferenced next hidden from t=2 to T-2
         # [(bs, seq_len - 3, num_colors)] * num_hiddens
         next_z_infer_probs = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
@@ -1119,9 +1120,9 @@ class InferenceCMI(Inference):
             bs, seq_len = z.shape[:2]
 
             # For MLP encoder
-            # true next observables from t=2 to T-1
-            # [(bs, seq_len - 2, num_colors)] * num_observables
-            next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
+            # true next observables from t=2 to T-2
+            # [(bs, seq_len - 3, num_colors)] * num_observables
+            next_x = torch.split(x[:, 1:-2], self.num_colors, dim=-1)
             # inferenced next hidden from t=2 to T-2
             # [(bs, seq_len - 3, num_colors)] * num_hiddens
             next_z_infer_feature = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
@@ -1142,14 +1143,15 @@ class InferenceCMI(Inference):
                     # x_dists: [[OneHotCategorical(bs, seq_len - 2, num_colors)] * num_observables] * len(forward_mode)
                     # z_dists: [[(bs, seq_len - 2, num_colors)] * num_hidden] * len(forward_mode)
                     next_x_dists, next_z_prior_dists = self.forward_with_feature(x, z, u, mask)
-                    # next_x_dists = [[OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in forward_mode_i]
-                    #                 for forward_mode_i in next_x_dists]
                     # t=2 to T-2
+                    # [[OneHotCategorical(bs, seq_len - 3, num_colors)] * num_observables] * len(forward_mode)
+                    next_x_dists = [[OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in forward_mode_i]
+                                    for forward_mode_i in next_x_dists]
                     # [[OneHotCategorical(bs, seq_len - 3, num_colors)] * num_hiddens] * len(forward_mode)
                     next_z_prior_dists = [[OneHotCategorical(probs=dist_i[:, :-1]) for dist_i in forward_mode_i]
                                           for forward_mode_i in next_z_prior_dists]
 
-                    # recon: (bs, seq_len - 2, num_observables)
+                    # recon: (bs, seq_len - 3, num_observables)
                     full_recon, masked_recon, eval_recon = \
                         [self.prediction_loss_from_dist(next_x_dists_i, next_x,
                                                         keep_variable_dim=True,
@@ -1165,7 +1167,7 @@ class InferenceCMI(Inference):
                     if hidden is not None:
                         # hidden objects at t=T-2
                         # (bs, num_hiddens)
-                        next_hidden = [hidden[key][:, -2].squeeze(dim=-1).long()
+                        next_hidden = [hidden[key][:, -3].squeeze(dim=-1).long()
                                        for key in self.params.hidden_keys]
                         next_hidden = torch.stack(next_hidden, dim=-1)
                         next_feature_hidden = [z_i[:, -1].argmax(-1) for z_i in next_z_infer_feature]
@@ -1206,10 +1208,10 @@ class InferenceCMI(Inference):
                     # z_dists: [(bs, seq_len - 2, num_colors)] * num_hiddens
                     next_x_dists, next_z_prior_dists = self.forward_with_feature(x, z, u, mask,
                                                                                  forward_mode=("masked",))
-                    # next_x_dists = [OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in next_x_dists]
+                    next_x_dists = [OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in next_x_dists]
                     next_z_prior_dists = [OneHotCategorical(probs=dist_i[:, :-1]) for dist_i in next_z_prior_dists]
 
-                    # (bs, seq_len - 2, num_observables)
+                    # (bs, seq_len - 3, num_observables)
                     masked_recon = self.prediction_loss_from_dist(next_x_dists, next_x,
                                                                   keep_variable_dim=True,
                                                                   loss_type="recon")
@@ -1230,9 +1232,9 @@ class InferenceCMI(Inference):
         self.full_state_feature = None
 
         # log(T_o(full) / T_o(masked))
-        # (bs, seq_len - 2, num_observables, 1)
+        # (bs, seq_len - 3, num_observables, 1)
         full_recon = full_recon.unsqueeze(-1)
-        # (bs, seq_len - 2, num_observables, feature_dim + 1)
+        # (bs, seq_len - 3, num_observables, feature_dim + 1)
         masked_recon_ = torch.stack(masked_recon_, dim=-1)
         CMI_o = masked_recon_ - full_recon
         # (num_observables, feature_dim + 1)

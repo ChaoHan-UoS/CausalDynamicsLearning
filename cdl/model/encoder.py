@@ -887,6 +887,7 @@ class Encoder(nn.Module):
 
         self.init_model()
         self.reset_params()
+        self.to(self.device)
 
     def init_model(self):
         self.z_dim = z_dim = self.num_hidden_objects * self.num_colors
