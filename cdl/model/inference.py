@@ -277,10 +277,11 @@ class Inference(nn.Module):
             # (bs, n_pred_step, num_observables/num_hidden)
             pred_loss = -self.log_prob_from_distribution(pred_dist, next_feature)
         elif loss_type == "kl":
-            # (bs, n_pred_step, 1, num_colors)
+            next_feature = [next_feature_i.detach() for next_feature_i in next_feature]
+            # (bs, n_pred_step, num_hidden, num_colors)
             prior_dist = torch.stack(pred_dist, dim=2)
             infer_dist = torch.stack(next_feature, dim=2)
-            # summed over num_colors for KL; (bs, n_pred_step, 1)
+            # summed over num_colors for KL; (bs, n_pred_step, num_hidden)
             pred_loss = torch.sum(infer_dist * (torch.log(infer_dist + 1e-20) -
                                                 torch.log(prior_dist + 1e-20)), dim=-1)
         else:
