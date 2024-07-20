@@ -11,8 +11,8 @@ from model.gumbel import gumbel_sigmoid
 def reset_layer(w, b=None):
     # Setting a=sqrt(5) in kaiming_uniform is the same as initializing w with
     # uniform(-1/sqrt(in_features), 1/sqrt(in_features))
-    # nn.init.kaiming_uniform_(w, a=np.sqrt(5))
-    nn.init.kaiming_uniform_(w, nonlinearity='relu')
+    nn.init.kaiming_uniform_(w, a=np.sqrt(5))
+    # nn.init.kaiming_uniform_(w, nonlinearity='relu')
     if b is not None:
         fan_in = w.shape[1]
         bound = 1 / np.sqrt(fan_in)
