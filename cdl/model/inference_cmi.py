@@ -1203,24 +1203,15 @@ class InferenceCMI(Inference):
                         print("next_true_hidden", next_hidden[:20].t())
                         print("next_enco_hidden", next_feature_hidden[:20].t())
                         print("next_pred_hidden", pred_next_feature_hidden[:20].t())
-                        # eval_details["next_enc_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                        #                                        next_enc_hidden_acc[0]}
-                        # eval_details["next_pred_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                        #                                         next_pred_hidden_acc[0]}
-                        # eval_details["next_pred_enco_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                        #                                              next_pred_enco_hidden_acc[0]}
-                        eval_details["next_enc_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                                                               next_enc_hidden_acc[0],
-                                                               "h_{}".format(self.hidden_objects_ind[1]):
-                                                               next_enc_hidden_acc[1]}
-                        eval_details["next_pred_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                                                               next_pred_hidden_acc[0],
-                                                               "h_{}".format(self.hidden_objects_ind[1]):
-                                                               next_pred_hidden_acc[1]}
-                        eval_details["next_pred_enco_hidden_acc"] = {"h_{}".format(self.hidden_objects_ind[0]):
-                                                               next_pred_enco_hidden_acc[0],
-                                                               "h_{}".format(self.hidden_objects_ind[1]):
-                                                               next_pred_enco_hidden_acc[1]}
+
+                        eval_details["next_enc_hidden_acc"] = {}
+                        eval_details["next_pred_hidden_acc"] = {}
+                        eval_details["next_pred_enco_hidden_acc"] = {}
+                        for j in range(len(self.hidden_objects_ind)):
+                            key = "h_{}".format(self.hidden_objects_ind[j])
+                            eval_details["next_enc_hidden_acc"][key] = next_enc_hidden_acc[j]
+                            eval_details["next_pred_hidden_acc"][key] = next_pred_hidden_acc[j]
+                            eval_details["next_pred_enco_hidden_acc"][key] = next_pred_enco_hidden_acc[j]
                 else:
                     # x_dists: [OneHotCategorical(bs, seq_len - 2, num_colors)] * num_observables
                     # z_dists: [(bs, seq_len - 2, num_colors)] * num_hiddens
