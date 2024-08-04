@@ -1405,24 +1405,17 @@ class Encoder(nn.Module):
                 #     n = self.cf_n[0][j](mg)
                 mg = g[:, 0]
                 n = self.cf_n[0][j](mg)
-                z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
-                z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
+                # z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
+                # z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
-            # if i > 1:
-            #     # [(bs, 1, num_colors)] * num_hiddens
-            #     m = forward_with_feature(x[:, (i-2):(i-1)], z[:, (i-1):i], u[:, (i-1):i],
-            #                              forward_mode=("full",))[1]
-            #     # (bs, z_dim)
-            #     m = torch.cat(m, -1).squeeze(1)
-            #     n = (m + n) / 2
-
-            # # [(bs, num_colors)] * num_hiddens
-            # n = torch.split(n, self.num_colors, dim=-1)
-            #
-            # z_i = [self.reparam(n_i) for n_i in n]
-            # z[:, i] = torch.cat(z_i, dim=-1)
-            # z_probs_i = [F.softmax(n_i / 1, dim=-1) for n_i in n]
-            # z_probs[:, i] = torch.cat(z_probs_i, dim=-1)
+                if i > 1:
+                    # [(bs, 1, num_colors)] * num_hiddens
+                    m = forward_with_feature(x[:, (i-2):(i-1)], z[:, (i-1):i], u[:, (i-1):i],
+                                             forward_mode=("full",))[1]
+                    # (bs, num_colors)
+                    n = (m[j].squeeze(1) + n) / 2
+                z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
+                z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
         # state + target / reward: t=1 to T-2
         # (bs, seq_len - 2, 2 * num_objects * num_colors)

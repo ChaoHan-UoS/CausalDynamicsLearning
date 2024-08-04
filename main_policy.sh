@@ -1,5 +1,5 @@
 #!/bin/bash  
-#SBATCH --job-name=Backward_enc
+#SBATCH --job-name=Shared_forward
 #SBATCH --partition=gpu-h100
 #SBATCH --qos=gpu  
 #SBATCH --gres=gpu:1  
