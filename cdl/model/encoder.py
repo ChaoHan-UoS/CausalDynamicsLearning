@@ -1394,17 +1394,17 @@ class Encoder(nn.Module):
             for j in range(self.num_hidden_objects):
                 g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
                 g = torch.flip(g, [1])
-                if i > 1:
-                    zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
-                    m = self.mlp_m[j](zxu)
-                    mg = (m + g[:, 0]) / 2
-                    # (bs, num_colors)
-                    n = self.cf_n[1][j](mg)
-                else:
-                    mg = g[:, 0]
-                    n = self.cf_n[0][j](mg)
-                # mg = g[:, 0]
-                # n = self.cf_n[0][j](mg)
+                # if i > 1:
+                #     zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
+                #     m = self.mlp_m[j](zxu)
+                #     mg = (m + g[:, 0]) / 2
+                #     # (bs, num_colors)
+                #     n = self.cf_n[1][j](mg)
+                # else:
+                #     mg = g[:, 0]
+                #     n = self.cf_n[0][j](mg)
+                mg = g[:, 0]
+                n = self.cf_n[0][j](mg)
                 z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 

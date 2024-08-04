@@ -1,5 +1,5 @@
 #!/bin/bash  
-#SBATCH --job-name=TEST
+#SBATCH --job-name=Backward_enc
 #SBATCH --partition=gpu-h100
 #SBATCH --qos=gpu  
 #SBATCH --gres=gpu:1  
@@ -13,9 +13,10 @@ module load cuDNN/8.8.0.121-CUDA-12.0.0
 source activate tianshou  
 echo "Begin"  
   
-pwd  
+pwd
+nvidia-smi
 # Start logging GPU usage in the background
-nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1 > gpu_usage.log & NVIDIA_SMI_PID=$!
+nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1000 > gpu_usage.log & NVIDIA_SMI_PID=$!
 cd /users/ac1xch/CDL-DVAE/cdl  
   
 echo "Task"  

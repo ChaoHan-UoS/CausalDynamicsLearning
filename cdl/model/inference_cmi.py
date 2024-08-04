@@ -28,6 +28,8 @@ class InferenceCMI(Inference):
         self.reset_causal_graph_eval()
 
         self.update_num = 0
+        self.update_num_eval = 0
+        self.print_eval_freq = 10
 
     def init_model(self, encoder):
         params = self.params
@@ -1112,6 +1114,8 @@ class InferenceCMI(Inference):
         """
         feature_dim = self.feature_dim
 
+        self.update_num_eval += 1
+
         # set up cache for faster computation
         self.use_cache = False
         self.sa_feature_cache = None
@@ -1134,7 +1138,6 @@ class InferenceCMI(Inference):
             next_z_infer_feature = torch.split(z_probs[:, 2:3], self.num_colors, dim=-1)
             # (bs, 1, num_hiddens, num_colors)
             z_infer_probs = torch.stack(next_z_infer_feature, dim=-2)
-            print("z_infer_probs", z_infer_probs[:2])
 
             # # For masked MLP encoder
             # # true next observables from t=2 to T-1
@@ -1164,7 +1167,6 @@ class InferenceCMI(Inference):
                                           for forward_mode_i in next_z_prior_dists]
                     # (bs, 1, num_hiddens, num_colors)
                     next_z_prior_full = torch.stack(next_z_prior_dists[0], dim=-2)
-                    print("next_z_prior_full", next_z_prior_full[:2])
                     next_z_prior_masked = torch.stack(next_z_prior_dists[1], dim=-2)
 
                     # recon: (bs, 1, num_observables)
@@ -1199,10 +1201,6 @@ class InferenceCMI(Inference):
                         next_enc_hidden_acc = (next_feature_hidden == next_hidden).sum(0) / bs
                         next_pred_hidden_acc = (pred_next_feature_hidden == next_hidden).sum(0) / bs
                         next_pred_enco_hidden_acc = (pred_next_feature_hidden == next_feature_hidden).sum(0) / bs
-
-                        print("next_true_hidden", next_hidden[:20].t())
-                        print("next_enco_hidden", next_feature_hidden[:20].t())
-                        print("next_pred_hidden", pred_next_feature_hidden[:20].t())
 
                         eval_details["next_enc_hidden_acc"] = {}
                         eval_details["next_pred_hidden_acc"] = {}
@@ -1314,6 +1312,19 @@ class InferenceCMI(Inference):
             mask_CMI_max, _ = self.mask_CMI.max(dim=1, keepdim=True)
             mask_low_thres = (self.mask_CMI < self.CMI_threshold) * (self.mask_CMI == mask_CMI_max)
             self.mask = mask_high_thres + mask_low_thres
+
+        if not self.update_num_eval % self.print_eval_freq:
+            print("z_infer_probs", z_infer_probs[:2])
+            print("next_z_prior_full", next_z_prior_full[:2])
+
+            print("next_true_hidden", next_hidden[:20].t())
+            print("next_enco_hidden", next_feature_hidden[:20].t())
+            print("next_pred_hidden", pred_next_feature_hidden[:20].t())
+
+            # print("mask_CMI_lb", self.mask_CMI_lb)
+            # print("mask_CMI_ub", self.mask_CMI_ub)
+            print("mask_CMI", self.mask_CMI)
+
         loss_details = {**eval_details, **rew_loss_detail}
         return loss_details
 
