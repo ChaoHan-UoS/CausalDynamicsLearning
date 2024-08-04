@@ -917,22 +917,24 @@ class Encoder(nn.Module):
             self.rnn_g.append(nn.LSTM(xxu_dim, dim_rnn_g, num_rnn_g, batch_first=True))
 
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t
-        dic_layers = OrderedDict()
-        for n in range(len(dims_mlp_m)):
-            if n == 0:
-                dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
-                # dic_layers['linear' + str(n)] = nn.Linear(xu_dim, dims_mlp_m[n])
-                # dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
-            else:
-                dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
-            dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_mlp_m[n])
-            dic_layers['activation' + str(n)] = nn.ReLU()
-            dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
-        dic_layers['linear_last'] = nn.Linear(dims_mlp_m[-1], dim_rnn_g)
-        dic_layers['layer_norm_last'] = nn.LayerNorm(dim_rnn_g)
-        dic_layers['activation_last'] = nn.ReLU()
-        dic_layers['dropout_last'] = nn.Dropout(p=dropout_p)
-        self.mlp_m = nn.Sequential(dic_layers)
+        self.mlp_m = nn.ModuleList()
+        for i in range(self.num_hidden_objects):
+            dic_layers = OrderedDict()
+            for n in range(len(dims_mlp_m)):
+                if n == 0:
+                    dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(xu_dim, dims_mlp_m[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
+                else:
+                    dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
+                dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_mlp_m[n])
+                dic_layers['activation' + str(n)] = nn.ReLU()
+                dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
+            dic_layers['linear_last'] = nn.Linear(dims_mlp_m[-1], dim_rnn_g)
+            dic_layers['layer_norm_last'] = nn.LayerNorm(dim_rnn_g)
+            dic_layers['activation_last'] = nn.ReLU()
+            dic_layers['dropout_last'] = nn.Dropout(p=dropout_p)
+            self.mlp_m.append(nn.Sequential(dic_layers))
 
         # # hindsight-based MLP encoder for first connected hiddens
         # dic_layers = OrderedDict()
@@ -976,19 +978,22 @@ class Encoder(nn.Module):
 
         # m_t, g_t -> n_t; independent MLP for each hidden object
         self.cf_n = nn.ModuleList()
-        for i in range(self.num_hidden_objects):
-            dic_layers = OrderedDict()
-            for n in range(len(dims_cf_n)):
-                if n == 0:
-                    dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
-                    # dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
-                else:
-                    dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
-                dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
-                dic_layers['activation' + str(n)] = nn.ReLU()
-                dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
-            dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], self.num_colors)
-            self.cf_n.append(nn.Sequential(dic_layers))
+        for i in range(2):
+            cf_n_h = nn.ModuleList()
+            for j in range(self.num_hidden_objects):
+                dic_layers = OrderedDict()
+                for n in range(len(dims_cf_n)):
+                    if n == 0:
+                        dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                        # dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
+                    else:
+                        dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
+                    dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
+                    dic_layers['activation' + str(n)] = nn.ReLU()
+                    dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
+                dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], self.num_colors)
+                cf_n_h.append(nn.Sequential(dic_layers))
+            self.cf_n.append(cf_n_h)
 
         params = self.params
         feedforward_enc_params = self.feedforward_enc_params
@@ -1383,15 +1388,23 @@ class Encoder(nn.Module):
             # z_probs[:, i] = torch.cat(z_probs_i, dim=-1)
 
             # (bs, 2, 2 * num_observables * num_colors + num_observables)
-            xxu = torch.cat((x_tm1[:, i:(i + 2)], x[:, i:(i + 2)], u[:, i:(i + 2)]), -1)
+            xxu = torch.cat((x_tm1[:, i: (i+2)], x[:, i: (i+2)], u[:, i: (i+2)]), -1)
             # # (bs, z_dim)
             # n = self.cf_n(g[:, 0])
             for j in range(self.num_hidden_objects):
                 g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
                 g = torch.flip(g, [1])
-
-                # (bs, num_colors)
-                n = self.cf_n[j](g[:, 0])
+                if i > 1:
+                    zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
+                    m = self.mlp_m[j](zxu)
+                    mg = (m + g[:, 0]) / 2
+                    # (bs, num_colors)
+                    n = self.cf_n[1][j](mg)
+                else:
+                    mg = g[:, 0]
+                    n = self.cf_n[0][j](mg)
+                # mg = g[:, 0]
+                # n = self.cf_n[0][j](mg)
                 z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
