@@ -15,8 +15,11 @@ echo "Begin"
   
 pwd
 nvidia-smi
+
+mkdir -p gpu
+GPU_LOG_FILE="gpu_usage_${SLURM_JOB_ID}.log"
 # Start logging GPU usage in the background
-nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1000 > gpu_usage.log & NVIDIA_SMI_PID=$!
+nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1000 > gpu/$GPU_LOG_FILE & NVIDIA_SMI_PID=$!
 cd /users/ac1xch/CDL-DVAE/cdl  
   
 echo "Task"  
