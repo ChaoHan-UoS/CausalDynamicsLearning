@@ -877,8 +877,8 @@ class InferenceCMI(Inference):
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
 
-        # z, z_probs, x, u, st, r = self.encoder(obs, self.forward_with_feature)
-        z, z_probs, x, u, st, r = self.encoder(obs)
+        z, z_probs, x, u, st, r = self.encoder(obs, self.forward_with_feature)
+        # z, z_probs, x, u, st, r = self.encoder(obs)
         bs, seq_len = z.shape[:2]
         mask = self.get_training_mask(bs, seq_len)  # (bs, seq_len, feature_dim, feature_dim + 1)
         # predicted next observables from t=2 to T
@@ -1125,8 +1125,8 @@ class InferenceCMI(Inference):
         masked_recon_ = []
         masked_recon_h_ = []
         with torch.no_grad():
-            # z, z_probs, x, u, st, r = self.encoder(obs, self.forward_with_feature)
-            z, z_probs, x, u, st, r = self.encoder(obs)
+            z, z_probs, x, u, st, r = self.encoder(obs, self.forward_with_feature)
+            # z, z_probs, x, u, st, r = self.encoder(obs)
             bs, seq_len = z.shape[:2]
 
             # For MLP encoder
