@@ -1061,7 +1061,7 @@ class Chemical(gym.Env):
         # h[0] = 1
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
         s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
-                                                                                    p=[0.0, 0.1, 0.8, 0.1, 0.0])
+                                                                                    p=[0.0, 0.0, 1, 0.0, 0.0])
         s_[s_ < 0] = self.num_colors - 1
         s_t1 = torch.fmod(s_, self.num_colors)
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition

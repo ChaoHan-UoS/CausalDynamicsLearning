@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1, 2],
+            "hidden_objects_ind": [2, 3],
             "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 3,

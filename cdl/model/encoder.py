@@ -1367,15 +1367,17 @@ class Encoder(nn.Module):
         x_tm1 = torch.zeros_like(x)
         x_tm1[:, 1:] = x[:, :-1]
         for i in range(1, 3):
-            if i > 1:
-                # [(bs, 1, num_colors)] * num_hiddens
-                m = forward_with_feature(x[:, (i - 2):(i - 1)], z[:, (i - 1):i], u[:, (i - 1):i],
-                                         forward_mode=("full",))[1]
+            # if i > 1:
+            #     # [(bs, 1, num_colors)] * num_hiddens
+            #     m = forward_with_feature(x[:, (i - 2):(i - 1)], z[:, (i - 1):i], u[:, (i - 1):i],
+            #                              forward_mode=("full",))[1]
 
             # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables)
             xxu = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
                              x[:, i: (i + self.num_hidden_objects)],
                              u[:, i: (i + self.num_hidden_objects)]), -1)
+            g, _ = self.rnn_g[0](torch.flip(xxu, [1]))
+            g = torch.flip(g, [1])
 
             # # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables)
             # xu = torch.cat((x[:, (i - 1): (i + self.num_hidden_objects)],
@@ -1384,8 +1386,6 @@ class Encoder(nn.Module):
             # # (bs, z_dim)
             # n = self.cf_n(g[:, 0])
             for j in range(self.num_hidden_objects):
-                g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
-                g = torch.flip(g, [1])
                 # if i > 1:
                 #     zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
                 #     m = self.mlp_m[j](zxu)
@@ -1396,9 +1396,9 @@ class Encoder(nn.Module):
                 #     mg = g[:, 0]
                 #     n = self.cf_n[0][j](mg)
                 n = self.cf_n[0][j](g[:, 0])
-                if i > 1:
-                    # (bs, num_colors)
-                    n = (m[j].squeeze(1) + n) / 2
+                # if i > 1:
+                #     # (bs, num_colors)
+                #     n = (m[j].squeeze(1) + n) / 2
                 z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
