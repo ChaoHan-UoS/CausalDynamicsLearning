@@ -122,7 +122,7 @@ class InferenceCMI(Inference):
     def init_graph(self, params, encoder):
         feature_dim = encoder.feature_dim
         device = params.device
-        stack_num = params.training_params.replay_buffer_params.stack_num
+        self.stack_num = stack_num = params.training_params.replay_buffer_params.stack_num
         eval_batch_size = self.cmi_params.eval_batch_size
         self.CMI_threshold = self.cmi_params.CMI_threshold
 
@@ -1184,9 +1184,9 @@ class InferenceCMI(Inference):
                     #      for next_z_dists_i in next_z_prior_dists]
 
                     if hidden is not None:
-                        # hidden objects at t=T-1
+                        # hidden objects at t=2
                         # (bs, num_hiddens)
-                        next_hidden = [hidden[key][:, -2].squeeze(dim=-1).long()
+                        next_hidden = [hidden[key][:, 1].squeeze(dim=-1).long()
                                        for key in self.params.hidden_keys]
                         next_hidden = torch.stack(next_hidden, dim=-1)
                         next_feature_hidden = [z_i[:, -1].argmax(-1) for z_i in next_z_infer_feature]

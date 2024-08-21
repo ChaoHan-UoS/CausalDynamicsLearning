@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
+            "hidden_objects_ind": [0, 1],
             "hidden_targets_ind": [],
             "num_objects": 3,
             "num_colors": 3,
@@ -49,7 +49,7 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 3,
+            "max_steps": 4,
             "num_target_interventions": 3,
             "g": "chain3",
             "match_type": "all",
@@ -80,7 +80,7 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 3
+            "stack_num": 4
         }
     },
     "encoder_params": {

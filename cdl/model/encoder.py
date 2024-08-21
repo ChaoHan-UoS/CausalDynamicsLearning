@@ -1376,8 +1376,8 @@ class Encoder(nn.Module):
             xxu = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
                              x[:, i: (i + self.num_hidden_objects)],
                              u[:, i: (i + self.num_hidden_objects)]), -1)
-            g, _ = self.rnn_g[0](torch.flip(xxu, [1]))
-            g = torch.flip(g, [1])
+            # g, _ = self.rnn_g[0](torch.flip(xxu, [1]))
+            # g = torch.flip(g, [1])
 
             # # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables)
             # xu = torch.cat((x[:, (i - 1): (i + self.num_hidden_objects)],
@@ -1386,6 +1386,8 @@ class Encoder(nn.Module):
             # # (bs, z_dim)
             # n = self.cf_n(g[:, 0])
             for j in range(self.num_hidden_objects):
+                g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
+                g = torch.flip(g, [1])
                 # if i > 1:
                 #     zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
                 #     m = self.mlp_m[j](zxu)
