@@ -722,6 +722,7 @@ from env.drawing import render_cubes, get_colors_and_weights
 from env.physical_env import Coord
 
 graphs = {
+    'all2all2': '0->1, 1->0',
     'chain3': '0->1->2',
     'fork3': '0->{1-2}',
     'fork5': '0->{1-4}',
@@ -1062,7 +1063,7 @@ class Chemical(gym.Env):
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
         # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
         #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
-        mask_h = F.one_hot(torch.tensor(2), self.num_objects).float()
+        mask_h = F.one_hot(torch.tensor(0), self.num_objects).float()
         s_ = torch.matmul(self.adjacency_matrix, s_t) + mask_h * self.np_random.choice(
             [-1, 0, 1], self.num_objects, p=[0.5, 0.0, 0.5])
         s_[s_ < 0] = self.num_colors - 1
@@ -1088,7 +1089,8 @@ class Chemical(gym.Env):
             print('INFO: Loading predefined graph for configuration ' + str(g))
             g = graphs[g]
         num_nodes = self.num_objects
-        num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
+        # num_edges = self.np_random.integers(num_nodes, num_nodes * (num_nodes - 1) // 2 + 1)
+        num_edges = None
         self.adjacency_matrix = random_dag(num_nodes, num_edges, self.np_random, g=g)
         self.adjacency_matrix = torch.from_numpy(self.adjacency_matrix).to(self.device).float()
         self.adjacency_matrix += torch.eye(self.num_objects)

@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys_f": ["obj0", "obj1", "obj2"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
+    "obs_keys_f": ["obj0", "obj1"],
+    "goal_keys_f": ["target_obj0", "target_obj1"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -35,9 +35,9 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [0, 1],
+            "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 3,
+            "num_objects": 2,
             "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
@@ -49,9 +49,9 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 4,
+            "max_steps": 3,
             "num_target_interventions": 3,
-            "g": "chain3",
+            "g": "all2all2",
             "match_type": "all",
             "dense_reward": true
         }
@@ -80,7 +80,7 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 4
+            "stack_num": 3
         }
     },
     "encoder_params": {
