@@ -1184,9 +1184,9 @@ class InferenceCMI(Inference):
                     #      for next_z_dists_i in next_z_prior_dists]
 
                     if hidden is not None:
-                        # hidden objects at t=2
+                        # hidden objects at t=3
                         # (bs, num_hiddens)
-                        next_hidden = [hidden[key][:, 1].squeeze(dim=-1).long()
+                        next_hidden = [hidden[key][:, 2].squeeze(dim=-1).long()
                                        for key in self.params.hidden_keys]
                         next_hidden = torch.stack(next_hidden, dim=-1)
                         next_feature_hidden = [z_i[:, -1].argmax(-1) for z_i in next_z_infer_feature]
