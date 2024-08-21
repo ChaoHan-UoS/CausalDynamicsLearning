@@ -984,7 +984,8 @@ class Encoder(nn.Module):
                 dic_layers = OrderedDict()
                 for n in range(len(dims_cf_n)):
                     if n == 0:
-                        dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                        dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g if i == 0 else 2 * dim_rnn_g,
+                                                                  dims_cf_n[n])
                         # dic_layers['linear' + str(n)] = nn.Linear(2 * dim_rnn_g, dims_cf_n[n])
                     else:
                         dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
@@ -1388,16 +1389,17 @@ class Encoder(nn.Module):
             for j in range(self.num_hidden_objects):
                 g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
                 g = torch.flip(g, [1])
-                # if i > 1:
-                #     zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
-                #     m = self.mlp_m[j](zxu)
-                #     mg = (m + g[:, 0]) / 2
-                #     # (bs, num_colors)
-                #     n = self.cf_n[1][j](mg)
-                # else:
-                #     mg = g[:, 0]
-                #     n = self.cf_n[0][j](mg)
-                n = self.cf_n[0][j](g[:, 0])
+                if i > 1:
+                    zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
+                    m = self.mlp_m[j](zxu)
+                    # mg = (m + g[:, 0]) / 2
+                    mg = torch.cat((m, g[:, 0]), -1)
+                    # (bs, num_colors)
+                    n = self.cf_n[1][j](mg)
+                else:
+                    mg = g[:, 0]
+                    n = self.cf_n[0][j](mg)
+                # n = self.cf_n[0][j](g[:, 0])
                 # if i > 1:
                 #     # (bs, num_colors)
                 #     n = (m[j].squeeze(1) + n) / 2
