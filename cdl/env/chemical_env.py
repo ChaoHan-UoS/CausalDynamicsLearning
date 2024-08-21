@@ -1060,8 +1060,11 @@ class Chemical(gym.Env):
         # h = torch.zeros_like(a_t)
         # h[0] = 1
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
-        s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
-                                                                                    p=[0.0, 0.0, 1, 0.0, 0.0])
+        # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
+        #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
+        mask_h = F.one_hot(torch.tensor(1), self.num_objects).float()
+        s_ = torch.matmul(self.adjacency_matrix, s_t) + mask_h * self.np_random.choice(
+            [-1, 0, 1], self.num_objects, p=[0.5, 0.0, 0.5])
         s_[s_ < 0] = self.num_colors - 1
         s_t1 = torch.fmod(s_, self.num_colors)
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
@@ -1249,8 +1252,9 @@ class Chemical(gym.Env):
             # if i == self.chemical_env_params.hidden_objects_ind[0]:
             #     random_color = 0
             # else:
-            random_color = self.np_random.integers(0, self.num_colors)
-            self.object_to_color[i][random_color] = 1
+            # random_color = self.np_random.integers(0, self.num_colors)
+            # self.object_to_color[i][random_color] = 1
+            self.object_to_color[i][i] = 1
 
         if self.movement == 'Dynamic':
             self.objects = OrderedDict()

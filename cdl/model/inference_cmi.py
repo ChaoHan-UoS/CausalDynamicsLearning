@@ -1315,8 +1315,8 @@ class InferenceCMI(Inference):
             self.mask = mask_high_thres + mask_low_thres
 
         if not self.update_num_eval % self.print_eval_freq:
-            print("z_infer_probs", z_infer_probs[:2])
-            print("next_z_prior_full", next_z_prior_full[:2])
+            print("z_infer_probs", z_infer_probs[:5])
+            print("next_z_prior_full", next_z_prior_full[:5])
 
             print("next_true_hidden", next_hidden[:20].t())
             print("next_enco_hidden", next_feature_hidden[:20].t())
