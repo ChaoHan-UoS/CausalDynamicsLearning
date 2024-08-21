@@ -1062,7 +1062,7 @@ class Chemical(gym.Env):
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
         # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
         #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
-        mask_h = F.one_hot(torch.tensor(0), self.num_objects).float()
+        mask_h = F.one_hot(torch.tensor(2), self.num_objects).float()
         s_ = torch.matmul(self.adjacency_matrix, s_t) + mask_h * self.np_random.choice(
             [-1, 0, 1], self.num_objects, p=[0.5, 0.0, 0.5])
         s_[s_ < 0] = self.num_colors - 1
