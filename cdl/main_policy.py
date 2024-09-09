@@ -38,13 +38,12 @@ from tianshou.data import to_torch
 
 from env.chemical_env import Chemical
 
-import matplotlib.pyplot as plt
 import matplotlib
-
 # matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
 
 
-def sample_inference(batch_data, params):
+def batch_process(batch_data, params):
     """
     :return obs_batch: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
             hidden_batch: {obs_i_key: (bs, seq_len, obs_i_shape)}
@@ -146,6 +145,8 @@ def train(params):
     writer = SummaryWriter(os.path.join(params.rslts_dir, "tensorboard"))
     model_dir = os.path.join(params.rslts_dir, "trained_models")
     os.makedirs(model_dir, exist_ok=True)
+    plot_dir = os.path.join(params.rslts_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
 
     start_step = get_start_step_from_model_loading(params)
     total_steps = training_params.total_steps
@@ -156,7 +157,7 @@ def train(params):
 
     # init episode variables
     episode_num = 0
-    (obs, obs_f), info = env.reset()  # full obs that will be masked before saving in buffer
+    (obs, obs_f), info = env.reset()
     scripted_policy.reset(obs)
 
     done = np.zeros(num_env, dtype=bool) if is_vecenv else False
@@ -171,10 +172,6 @@ def train(params):
     gumbel_temp_ss = gumbel_softmax_params.gumbel_temp_ss
     anneal_steps = gumbel_softmax_params.anneal_steps
     anneal_rate = gumbel_softmax_params.anneal_rate
-
-    # save plots
-    plot_dir = os.path.join(params.rslts_dir, "plots")
-    os.makedirs(plot_dir, exist_ok=True)
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
@@ -296,7 +293,7 @@ def train(params):
             inference.setup_annealing(step)
             for i_grad_step in range(inference_gradient_steps):
                 batch_data, batch_ids = buffer_train.sample(inference_params.batch_size)
-                obs_batch, hidden_batch = sample_inference(batch_data, params)
+                obs_batch, hidden_batch = batch_process(batch_data, params)
                 loss_detail = inference.update(obs_batch, hidden_batch)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
                 # loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
@@ -313,12 +310,12 @@ def train(params):
                     inference.reset_causal_graph_eval()
                     for _ in range(cmi_params.eval_steps):
                         batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                        obs_batch, hidden_batch = sample_inference(batch_data, params)
+                        obs_batch, hidden_batch = batch_process(batch_data, params)
                         eval_pred_loss = inference.update_mask(obs_batch, hidden_batch)
                         loss_details["inference_eval"].append(eval_pred_loss)
                 else:
                     batch_data, batch_ids = buffer_eval_cmi.sample(cmi_params.eval_batch_size)
-                    obs_batch, hidden_batch = sample_inference(batch_data, params)
+                    obs_batch, hidden_batch = batch_process(batch_data, params)
                     loss_detail = inference.update(obs_batch, eval=True)
                     loss_details["inference_eval"].append(loss_detail)
 

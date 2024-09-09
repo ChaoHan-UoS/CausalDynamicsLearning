@@ -723,6 +723,7 @@ from env.physical_env import Coord
 
 graphs = {
     'all2all2': '0->1, 1->0',
+    'chain2': '0->1',
     'chain3': '0->1->2',
     'fork3': '0->{1-2}',
     'fork5': '0->{1-4}',
@@ -1029,6 +1030,10 @@ class Chemical(gym.Env):
                                  if i not in chemical_env_params.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
 
+        self.noise_mask_ind = chemical_env_params.noise_mask_ind
+        self.noise_p = chemical_env_params.noise_p
+        self.noise_p_len = len(self.noise_p)
+
         self.set_graph(chemical_env_params.g)
 
         # If True, then check for collisions and don't allow two
@@ -1063,11 +1068,17 @@ class Chemical(gym.Env):
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
         # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
         #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
-        mask_h = F.one_hot(torch.tensor(0), self.num_objects).float()
-        s_ = torch.matmul(self.adjacency_matrix, s_t) + mask_h * self.np_random.choice(
-            [-1, 0, 1], self.num_objects, p=[0.5, 0.0, 0.5])
-        s_[s_ < 0] = self.num_colors - 1
+        noise_mask = torch.zeros(self.num_objects)
+        noise_mask[self.noise_mask_ind] = 1
+        noise_range = list(range(-(self.noise_p_len // 2), (self.noise_p_len // 2) + 1))
+
+        # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + noise_mask * self.np_random.choice(
+        #     noise_range, self.num_objects, p=self.noise_p)
+        s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + noise_mask * self.np_random.choice(
+            noise_range, p=self.noise_p)
         s_t1 = torch.fmod(s_, self.num_colors)
+        s_t1[s_t1 == -1] = self.num_colors - 1
+        s_t1[s_t1 == -2] = self.num_colors - 2
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t), self.num_colors)  # autonomous one-step transition
         # s_t1 = (torch.matmul(self.adjacency_matrix, s_t) // torch.sum(self.adjacency_matrix, dim=1)) + a_t
         # s_t1 = torch.matmul(self.adjacency_matrix, s_t + a_t) // torch.sum(self.adjacency_matrix, dim=1)
@@ -1250,13 +1261,12 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            # random_color = 1
-            # if i == self.chemical_env_params.hidden_objects_ind[0]:
-            #     random_color = 0
-            # else:
-            # random_color = self.np_random.integers(0, self.num_colors)
-            # self.object_to_color[i][random_color] = 1
-            self.object_to_color[i][i] = 1
+            if i == self.chemical_env_params.hidden_objects_ind[0]:
+                random_color = 1
+            else:
+                random_color = self.np_random.integers(0, self.num_colors)
+            self.object_to_color[i][random_color] = 1
+            # self.object_to_color[i][1] = 1
 
         if self.movement == 'Dynamic':
             self.objects = OrderedDict()

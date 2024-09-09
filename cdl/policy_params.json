@@ -1,7 +1,7 @@
 {
     "info": "chemical_full_dynamics_cmi",
-    "obs_keys_f": ["obj0", "obj1"],
-    "goal_keys_f": ["target_obj0", "target_obj1"],
+    "obs_keys_f": ["obj0", "obj1", "obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -37,7 +37,7 @@
         "chemical_env_params": {
             "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 2,
+            "num_objects": 3,
             "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
@@ -51,9 +51,11 @@
             "use_cuda": false,
             "max_steps": 4,
             "num_target_interventions": 3,
-            "g": "all2all2",
+            "g": "chain3",
             "match_type": "all",
-            "dense_reward": true
+            "dense_reward": true,
+            "noise_mask_ind": [0],
+            "noise_p": [0.5, 0.0, 0.5]
         }
     },
     "training_params": {
@@ -69,7 +71,7 @@
         "plot_prob_freq": 1000,
         "supervised_encoder": false,
         "supervised_encoder_plot": false,
-        "supervised_decoder": false,
+        "supervised_hidden_decoder": true,
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
@@ -84,6 +86,8 @@
         }
     },
     "encoder_params": {
+        "num_past": 0,
+        "num_future": 0,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
         "num_rnn_g": 1,
@@ -91,7 +95,7 @@
         "dims_cf_n": [64, 64],
         "dropout_p": 0,
         "gumbel_softmax_params": {
-            "gumbel_temp_0": 5,
+            "gumbel_temp_0": 2,
             "gumbel_temp_ss": 1,
             "anneal_steps": 10000,
             "anneal_rate": 0.00001
@@ -107,6 +111,12 @@
             "generative_fc_dims": [256, 256],
             "dropout_p": 0
         }
+    },
+    "hidden_decoder_params": {
+        "linear": false,
+        "dim_h": [128],
+        "dropout_p": 0,
+        "lr": 5e-4
     },
     "decoder_params": {
         "decoder_type": "feedforward",

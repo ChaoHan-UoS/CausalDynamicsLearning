@@ -34,13 +34,14 @@ class TrainingParams(AttrDict):
             training_params.load_inference = \
                 os.path.join(repo_path, "interesting_models", training_params.load_inference)
         if getattr(training_params, "load_policy", None) is not None:
-            training_params.load_policy = os.path.join(repo_path, "interesting_models", training_params.load_policy)
+            training_params.load_policy = \
+                os.path.join(repo_path, "interesting_models", training_params.load_policy)
         if getattr(training_params, "load_model_based", None) is not None:
             training_params.load_model_based = \
                 os.path.join(repo_path, "interesting_models", training_params.load_model_based)
         if getattr(training_params, "load_replay_buffer", None) is not None:
-            training_params.load_replay_buffer = os.path.join(repo_path, "replay_buffer",
-                                                              training_params.load_replay_buffer)
+            training_params.load_replay_buffer = \
+                os.path.join(repo_path, "replay_buffer", training_params.load_replay_buffer)
 
         if train:
             if training_params_fname == "policy_params.json":

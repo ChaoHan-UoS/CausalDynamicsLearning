@@ -148,8 +148,9 @@ def rotanimate(ax, angles, output, **kwargs):
 #     obs_spec = params.obs_spec
 #     feature_dim, action_dim = intervention_mask_lb.shape
 #
-#     fig = plt.figure(figsize=((feature_dim + action_dim) * 0.45 + 2, feature_dim * 0.45 + 2))
-#     fig, axes = plt.subplots(1, 2, figsize=((feature_dim + action_dim) * 0.45 * 2 + 4, feature_dim * 0.45 + 2))
+#     # fig = plt.figure(figsize=((feature_dim + action_dim) * 0.45 + 2, feature_dim * 0.45 + 2))
+#     fig, axs = plt.subplots(1, 2,
+#                              figsize=((feature_dim + action_dim) * 0.45 * 2 + 4, feature_dim * 0.45 + 2))
 #
 #     use_cmi = params.training_params.inference_algo == "cmi"
 #     vmax = params.inference_params.cmi_params.CMI_threshold if use_cmi else 1.0
@@ -159,15 +160,15 @@ def rotanimate(ax, angles, output, **kwargs):
 #         adjacency_intervention_ub = adjacency_intervention_ub * 100
 #
 #     # Plot the lower bound heatmap
-#     sns.heatmap(adjacency_intervention_lb, linewidths=1, vmin=0, vmax=vmax, square=True, annot=True, fmt='.2f',
-#                 cbar=False, ax=axes[0])
-#     axes[0].set_title("Adjacency Intervention LB")
+#     sns.heatmap(adjacency_intervention_lb, linewidths=1, vmin=0, vmax=vmax, square=True,
+#                 annot=True, fmt='.2f', cbar=False, ax=axs[0])
+#     axs[0].set_title("Adjacency Intervention LB")
 #     # Plot the upper bound heatmap
-#     sns.heatmap(adjacency_intervention_ub, linewidths=1, vmin=0, vmax=vmax, square=True, annot=True, fmt='.2f',
-#                 cbar=False, ax=axes[1])
-#     axes[1].set_title("Adjacency Intervention UB")
+#     sns.heatmap(adjacency_intervention_ub, linewidths=1, vmin=0, vmax=vmax, square=True,
+#                 annot=True, fmt='.2f', cbar=False, ax=axs[1])
+#     axs[1].set_title("Adjacency Intervention UB")
 #
-#     for ax in axes:
+#     for ax in axs:
 #         ax.tick_params(axis="x", bottom=True, top=True, labelbottom=True, labeltop=True)
 #         if params.encoder_params.encoder_type == "identity":
 #             tick_loc = []
@@ -193,6 +194,7 @@ def rotanimate(ax, angles, output, **kwargs):
 #     writer.add_figure("adjacency", fig, step + 1)
 #     plt.close("all")
 
+
 def plot_adjacency_intervention_mask(params, model, writer, step):
     adjacency = model.get_adjacency()
     intervention_mask = model.get_intervention_mask()
@@ -211,7 +213,8 @@ def plot_adjacency_intervention_mask(params, model, writer, step):
     if vmax < 0.01:
         vmax = vmax * 100
         adjacency_intervention = adjacency_intervention * 100
-    sns.heatmap(adjacency_intervention, linewidths=1, vmin=0, vmax=vmax, square=True, annot=True, fmt='.2f', cbar=False)
+    sns.heatmap(adjacency_intervention, linewidths=1, vmin=0, vmax=vmax, square=True,
+                annot=True, fmt='.2f', cbar=False)
 
     ax = plt.gca()
     ax.tick_params(axis="x", bottom=True, top=True, labelbottom=True, labeltop=True)
@@ -230,12 +233,13 @@ def plot_adjacency_intervention_mask(params, model, writer, step):
         plt.yticks(tick_loc, obs_keys, rotation=0)
     else:
         plt.vlines(feature_dim, ymin=0, ymax=feature_dim, colors='blue', linewidths=3)
-        plt.xticks([0.5 * feature_dim, feature_dim + 0.5 * action_dim], ["feature", "action"], rotation=90)
+        plt.xticks([0.5 * feature_dim, feature_dim + 0.5 * action_dim], ["feature", "action"],
+                   rotation=90)
     fig.tight_layout()
     writer.add_figure("adjacency", fig, step + 1)
     plt.close("all")
 
-'''
+
 def plot_disentanglement(params, encoder, decoder, replay_buffer, writer, step):
     assert params.encoder_params.encoder_type == "conv" and decoder is not None
 
@@ -322,5 +326,4 @@ def plot_disentanglement(params, encoder, decoder, replay_buffer, writer, step):
         fig.tight_layout()
         writer.add_figure("interpolation_feature_{}".format(i + 1), fig, step + 1)
         plt.close("all")
-'''
 

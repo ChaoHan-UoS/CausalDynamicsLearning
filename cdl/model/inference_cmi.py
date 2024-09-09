@@ -1133,6 +1133,8 @@ class InferenceCMI(Inference):
             # true next observables at t=2 to T-1
             # [(bs, seq_len - 2, num_colors)] * num_observables
             next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
+            # (bs, seq_len - 2, num_observables, num_colors)
+            x_label = torch.stack(next_x, dim=-2)
             # inferenced next hidden at t=2 to T-1
             # [(bs, seq_len - 2, num_colors)] * num_hiddens
             # next_z_infer_feature = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
@@ -1160,6 +1162,10 @@ class InferenceCMI(Inference):
                     # [[OneHotCategorical(bs, seq_len - 2, num_colors)] * num_observables] * len(forward_mode)
                     next_x_dists = [[OneHotCategorical(probs=dist_i.probs[:, :-1]) for dist_i in forward_mode_i]
                                     for forward_mode_i in next_x_dists]
+                    # [(bs, seq_len - 2, num_colors)] * num_observables
+                    predicted_x = [dist_i.probs for dist_i in next_x_dists[0]]
+                    # (bs, seq_len - 2, num_observables, num_colors)
+                    predicted_x = torch.stack(predicted_x, dim=-2)
                     # [[OneHotCategorical(bs, seq_len - 3, num_colors)] * num_hiddens] * len(forward_mode)
                     # next_z_prior_dists = [[OneHotCategorical(probs=dist_i[:, :-1]) for dist_i in forward_mode_i]
                     #                       for forward_mode_i in next_z_prior_dists]
@@ -1184,21 +1190,20 @@ class InferenceCMI(Inference):
                     #      for next_z_dists_i in next_z_prior_dists]
 
                     if hidden is not None:
-                        # hidden objects at t=3
-                        # (bs, num_hiddens)
-                        next_hidden = [hidden[key][:, 2].squeeze(dim=-1).long()
+                        # hidden objects at t=2 to T-1
+                        # (bs, seq_len - 2, num_hiddens)
+                        next_hidden = [hidden[key][:, 1:-1].squeeze(dim=-1).long()
                                        for key in self.params.hidden_keys]
                         next_hidden = torch.stack(next_hidden, dim=-1)
-                        next_feature_hidden = [z_i[:, -1].argmax(-1) for z_i in next_z_infer_feature]
+                        next_feature_hidden = [z_i.argmax(-1) for z_i in next_z_infer_feature]
                         next_feature_hidden = torch.stack(next_feature_hidden, dim=-1)
                         # pred_next_feature_hidden = [z_i.probs[:, -1].argmax(-1)
                         #                             for z_i in next_z_prior_dists[0]]
-                        pred_next_feature_hidden = [z_i[:, -1].argmax(-1)
-                                                    for z_i in next_z_prior_dists[0]]
+                        pred_next_feature_hidden = [z_i.argmax(-1) for z_i in next_z_prior_dists[0]]
                         pred_next_feature_hidden = torch.stack(pred_next_feature_hidden, dim=-1)
 
                         # hidden prediction accuracy
-                        # (num_hiddens, )
+                        # (seq_len - 2, num_hiddens)
                         next_enc_hidden_acc = (next_feature_hidden == next_hidden).sum(0) / bs
                         next_pred_hidden_acc = (pred_next_feature_hidden == next_hidden).sum(0) / bs
                         next_pred_enco_hidden_acc = (pred_next_feature_hidden == next_feature_hidden).sum(0) / bs
@@ -1208,9 +1213,9 @@ class InferenceCMI(Inference):
                         eval_details["next_pred_enco_hidden_acc"] = {}
                         for j in range(len(self.hidden_objects_ind)):
                             key = "h_{}".format(self.hidden_objects_ind[j])
-                            eval_details["next_enc_hidden_acc"][key] = next_enc_hidden_acc[j]
-                            eval_details["next_pred_hidden_acc"][key] = next_pred_hidden_acc[j]
-                            eval_details["next_pred_enco_hidden_acc"][key] = next_pred_enco_hidden_acc[j]
+                            eval_details["next_enc_hidden_acc"][key] = next_enc_hidden_acc[-1, j]
+                            eval_details["next_pred_hidden_acc"][key] = next_pred_hidden_acc[-1, j]
+                            eval_details["next_pred_enco_hidden_acc"][key] = next_pred_enco_hidden_acc[-1, j]
                 else:
                     # x_dists: [OneHotCategorical(bs, seq_len - 1, num_colors)] * num_observables
                     # z_dists: [(bs, seq_len - 1, num_colors)] * num_hiddens
@@ -1315,12 +1320,13 @@ class InferenceCMI(Inference):
             self.mask = mask_high_thres + mask_low_thres
 
         if not self.update_num_eval % self.print_eval_freq:
-            print("z_infer_probs", z_infer_probs[:5])
-            print("next_z_prior_full", next_z_prior_full[:5])
-
-            print("next_true_hidden", next_hidden[:20].t())
-            print("next_enco_hidden", next_feature_hidden[:20].t())
-            print("next_pred_hidden", pred_next_feature_hidden[:20].t())
+            print("x_label", x_label[:5])
+            print("predicted_x", predicted_x[:5])
+            print("encoded_z", z_infer_probs[:5])
+            print("predicted_z", next_z_prior_full.squeeze(-2)[:5])
+            print("next_true_hidden", next_hidden[:20].permute(1, 2, 0))
+            print("next_enco_hidden", next_feature_hidden[:20].permute(1, 2, 0))
+            print("next_pred_hidden", pred_next_feature_hidden[:20].permute(1, 2, 0))
 
             # print("mask_CMI_lb", self.mask_CMI_lb)
             # print("mask_CMI_ub", self.mask_CMI_ub)
