@@ -1,5 +1,5 @@
 {
-    "info": "chemical_full_dynamics_cmi",
+    "info": "noisy_free_history_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
@@ -49,12 +49,12 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 4,
+            "max_steps": 7,
             "num_target_interventions": 3,
             "g": "chain3",
             "match_type": "all",
             "dense_reward": true,
-            "noise_mask_ind": [0],
+            "noise_mask_ind": [],
             "noise_p": [0.5, 0.0, 0.5]
         }
     },
@@ -65,29 +65,29 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 4000000,
+        "total_steps": 50000,
         "init_steps": 10000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
-        "supervised_encoder": false,
-        "supervised_encoder_plot": false,
-        "supervised_hidden_decoder": true,
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
         "plot_freq": 1000,
+        "supervised_hidden_decoder": true,
         "replay_buffer_params": {
             "capacity": 10000000,
             "max_sample_time": 128,
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 4
+            "stack_num": 7
         }
     },
     "encoder_params": {
-        "num_past": 0,
+        "use_all_past": true,
+        "use_all_future": false,
         "num_future": 0,
+        "num_past": 0,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
         "num_rnn_g": 1,
@@ -113,8 +113,8 @@
         }
     },
     "hidden_decoder_params": {
-        "linear": false,
-        "dim_h": [128],
+        "linear": true,
+        "dims_h": [128],
         "dropout_p": 0,
         "lr": 5e-4
     },

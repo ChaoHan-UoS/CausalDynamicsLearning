@@ -885,6 +885,11 @@ class Encoder(nn.Module):
             self.hidden_feature_inner_dim = np.array([self.num_colors for _ in range(self.num_hidden_objects)])
         self.dropout = nn.Dropout(p=self.feedforward_enc_params.dropout_p)
 
+        self.use_all_past = self.encoder_params.use_all_past
+        self.use_all_future = self.encoder_params.use_all_future
+        self.num_future = self.encoder_params.num_future
+        self.num_past = self.encoder_params.num_past
+
         self.init_model()
         self.reset_params()
         self.to(self.device)
@@ -916,7 +921,7 @@ class Encoder(nn.Module):
         # independent MLP for each hidden object
         self.rnn_g = nn.ModuleList()
         for i in range(self.num_hidden_objects):
-            self.rnn_g.append(nn.LSTM(xxu_dim, dim_rnn_g, num_rnn_g, batch_first=True))
+            self.rnn_g.append(nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True))
 
         # # independent MLP for each hidden object and time step
         # self.rnn_g = nn.ModuleList()
@@ -1354,8 +1359,12 @@ class Encoder(nn.Module):
 
     def forward(self, obs, forward_with_feature=None):
         """
-        full DVAE encoder with markovian forward info; fixed horizon of future info
-        (only use last step output of RNN) and single-step prediction
+        if use_all_past:
+            History encoder
+        else:
+            Full DVAE encoder: with/without markovian past (unshared forward MLP),
+            fixed future step (last step output of shared RNN) or
+            all future (each step output of common RNN)
         :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
         :return z / z_probs: (bs, seq_len, num_hiddens * num_colors)
                 x: (bs, seq_len, num_observables * num_colors)
@@ -1377,128 +1386,59 @@ class Encoder(nn.Module):
         # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
         x_tm1 = torch.zeros_like(x)
         x_tm1[:, 1:] = x[:, :-1]
+        if self.use_all_future or self.use_all_past:
+            # x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
+            # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
+            # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
+            # xxu = torch.cat((x_tm1, x, u), -1)
+            xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
+            g_h = []
+            for j in range(self.num_hidden_objects):
+                g, _ = self.rnn_g[j](torch.flip(xu, [1]) if self.use_all_future else xu)
+                g_h.append(torch.flip(g, [1]) if self.use_all_future else g)
         # for i in range(1, 3):
         for i in range(1, seq_len - self.num_hidden_objects + 1):
-            # if i > 1:
-            #     # [(bs, 1, num_colors)] * num_hiddens
-            #     m = forward_with_feature(x[:, (i - 2):(i - 1)], z[:, (i - 1):i], u[:, (i - 1):i],
-            #                              forward_mode=("full",))[1]
+            if self.num_future > 0:
+                # x_ids = F.one_hot(torch.tensor(i), seq_len).unsqueeze(0).unsqueeze(0)
+                # # (bs, num_hiddens, seq_len)
+                # x_ids = x_ids.repeat(bs, self.num_hidden_objects, 1).to(self.device)
 
-            x_ids = F.one_hot(torch.tensor(i), seq_len).unsqueeze(0).unsqueeze(0)
-            # (bs, num_hiddens, seq_len)
-            x_ids = x_ids.repeat(bs, self.num_hidden_objects, 1).to(self.device)
-
-            # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables + seq_len)
-            # xxui = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
-            #                  x[:, i: (i + self.num_hidden_objects)],
-            #                  u[:, i: (i + self.num_hidden_objects)], x_ids), -1)
-            xxu = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
-                             x[:, i: (i + self.num_hidden_objects)],
-                             u[:, i: (i + self.num_hidden_objects)]), -1)
-
-            # g, _ = self.rnn_g[0](torch.flip(xxu, [1]))
-            # g = torch.flip(g, [1])
-
-            # # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables)
-            # xu = torch.cat((x[:, (i - 1): (i + self.num_hidden_objects)],
-            #                 u[:, i: (i + self.num_hidden_objects + 1)]), -1)
-
-            # # (bs, z_dim)
-            # n = self.cf_n(g[:, 0])
+                # (bs, num_hiddens, 2 * num_observables * num_colors + num_observables + seq_len)
+                # xxui = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
+                #                  x[:, i: (i + self.num_hidden_objects)],
+                #                  u[:, i: (i + self.num_hidden_objects)], x_ids), -1)
+                xxu = torch.cat((x_tm1[:, i: (i + self.num_future)],
+                                 x[:, i: (i + self.num_future)],
+                                 u[:, i: (i + self.num_future)]), -1)
             for j in range(self.num_hidden_objects):
-                # g, _ = self.rnn_g[i][j](torch.flip(xxu, [1]))
-                g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
-                g = torch.flip(g, [1])
-                # if i > 1:
-                #     zxu = torch.cat((z[:, i-1], x[:, i-2], u[:, i-1]), -1)
-                #     m = self.mlp_m[j](zxu)
-                #     # mg = (m + g[:, 0]) / 2
-                #     mg = torch.cat((m, g[:, 0]), -1)
-                #     # (bs, num_colors)
-                #     n = self.cf_n[1][j](mg)
-                # else:
-                #     mg = g[:, 0]
-                #     n = self.cf_n[0][j](mg)
-                n = self.cf_n[0][j](g[:, 0])
-                z[:, i, j * self.num_colors: (j+1) * self.num_colors] = self.reparam(n)
-                z_probs[:, i, j * self.num_colors: (j+1) * self.num_colors] = F.softmax(n / 1, dim=-1)
+                zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
+                m = self.mlp_m[j](zxu)
 
-        # # state + target / reward: t=1 to 2
-        # # (bs, 2, 2 * num_objects * num_colors)
-        # st = torch.cat((ot[:, :2, :self.hidden_objects_ind[0] * self.num_colors],
-        #                 z[:, 1:3], ot[:, :2, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
-        # # [(bs, 2, num_colors)] * (2 * num_objects)
-        # st = torch.split(st, self.num_colors, dim=-1)
-        # r = r[:, :2]
-        # return z, z_probs, x[:, :3], u[:, :3], st, r
+                # Past, future, and fixed future encoders
+                if self.use_all_past:
+                    n = self.cf_n[0][j](g_h[j][:, i - 1])
+                elif self.use_all_future:
+                    mg = torch.cat((m, g_h[j][:, i]), -1) if (self.num_past > 0 and i > 1) \
+                        else g_h[j][:, i]
+                    n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
+                elif self.num_future > 0:
+                    g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
+                    g = torch.flip(g, [1])
+                    mg = torch.cat((m, g[:, 0]), -1) if (self.num_past > 0 and i > 1) else g[:, 0]
+                    n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
+                else:
+                    raise ValueError("Invalid encoder type")
+                z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
+                z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
         # state + target / reward: t=1 to T-1
-        # (bs, T-1, 2 * num_objects * num_colors)
+        # (bs, seq_len - 1, 2 * num_objects * num_colors)
         st = torch.cat((ot[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
                         z[:, 1:], ot[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
-        # [(bs, T-1, num_colors)] * (2 * num_objects)
+        # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
         st = torch.split(st, self.num_colors, dim=-1)
         r = r[:, :-1]
         return z, z_probs, x, u, st, r
-
-    # def forward(self, obs, forward_with_feature=None):
-    #     """
-    #     full DVAE encoder with unshared markovian forward info; backward RNN at each step
-    #     and multi-step prediction
-    #     :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
-    #     :return z / z_probs: (bs, seq_len, num_hiddens * num_colors)
-    #             x: (bs, seq_len, num_observables * num_colors)
-    #             u: (bs, seq_len, num_observables)
-    #             st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
-    #             r: (bs, seq_len - 2, 1)
-    #     """
-    #     o, a, ot, r = self.preprocess(obs)
-    #     x = o
-    #     u = torch.zeros_like(a)
-    #     u[:, 1:] = a[:, :-1]
-    #
-    #     bs, seq_len = a.shape[:2]
-    #     z_probs = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
-    #     z = torch.zeros((bs, seq_len, self.z_dim)).to(self.device)
-    #
-    #     # x_{t:T}, u_{t:T} -> g_t;
-    #     # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
-    #     # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
-    #     x_tm1 = torch.zeros_like(x)
-    #     x_tm1[:, 1:] = x[:, :-1]
-    #     x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
-    #     # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
-    #     # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
-    #     # xxu = torch.cat((x_tm1, x, u), -1)
-    #     xu = torch.cat((x_tm1, u), -1)
-    #     g_h = []
-    #     for j in range(self.num_hidden_objects):
-    #         g, _ = self.rnn_g[j](torch.flip(xu, [1]))
-    #         g = torch.flip(g, [1])
-    #         g_h.append(g)
-    #     for i in range(1, seq_len):
-    #         for j in range(self.num_hidden_objects):
-    #             if i == 1:
-    #                 n = self.cf_n[0][j](g_h[j][:, i])
-    #                 # n = self.cf_n[0][j](torch.zeros_like(g_h[j][:, i]))
-    #             else:
-    #                 zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
-    #                 m = self.mlp_m[j](zxu)
-    #                 mg = torch.cat((m, g_h[j][:, i]), -1)
-    #                 # mg = (m + g_h[j][:, i]) / 2
-    #                 n = self.cf_n[1][j](mg)
-    #             # n = self.cf_n[0][j](g_h[j][:, i])
-    #             z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
-    #             z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
-    #
-    #     # state + target / reward: t=1 to T-1
-    #     # (bs, seq_len - 1, 2 * num_objects * num_colors)
-    #     st = torch.cat((ot[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
-    #                     z[:, 1:], ot[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
-    #     # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
-    #     st = torch.split(st, self.num_colors, dim=-1)
-    #     r = r[:, :-1]
-    #     return z, z_probs, x, u, st, r
 
     # def forward(self, obs, forward_with_feature):
     #     """

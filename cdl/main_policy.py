@@ -53,7 +53,6 @@ def batch_process(batch_data, params):
     hidden_batch = {key: batch_data.info[key] for key in params.hidden_keys}
     return obs_batch, hidden_batch
 
-
 def train(params):
     device = torch.device("cuda:{}".format(params.cuda_id) if torch.cuda.is_available() else "cpu")
     # device = torch.device("cpu")

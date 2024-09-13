@@ -864,6 +864,36 @@ class InferenceCMI(Inference):
     #
     #     return loss_detail
 
+    def get_next_state(self, x, z_probs):
+        """
+        states from t=2 to T-1 to be compared with the predicted next states
+        :param x: (bs, seq_len, num_observables * num_colors)
+        :param z_probs: (bs, seq_len, num_hiddens * num_colors)
+        :return: next_x: [(bs, seq_len - 2, num_colors)] * num_observables
+                 next_z_infer_probs: [(bs, seq_len - 2, num_colors)] * num_hiddens
+        """
+        # For MLP encoder
+        # true next observables at t=2 to T-1
+        # [(bs, seq_len - 2, num_colors)] * num_observables
+        next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
+        # inferenced next hidden at t=2 to T-1
+        # [(bs, seq_len - 2, num_colors)] * num_hiddens
+        # next_z_infer_probs = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
+        next_z_infer_probs = torch.split(z_probs[:, 2:], self.num_colors, dim=-1)
+
+        # # For masked MLP encoder
+        # # true next observables from t=2 to T-1
+        # # [[(bs, num_colors)] * num_observables] * (seq_len - 2)
+        # next_x = x[1:-1]
+        # # [(bs, seq_len - 2, num_colors)] * num_observables
+        # next_x = self.stack_dist(next_x)
+        # # inferenced next hidden from t=2 to T-1
+        # # [(bs, seq_len - 2, num_colors)] * 1
+        # next_z_infer_probs = [z[:, 2:]]
+        # # next_feature = (next_x[:self.hidden_objects_ind[0]] + next_z_infer_probs
+        # #                 + next_x[self.hidden_objects_ind[-1]:])
+        return next_x, next_z_infer_probs
+
     def update(self, obs, hidden, eval=False):
         """
         NLL for hiddens
@@ -897,27 +927,7 @@ class InferenceCMI(Inference):
         next_z_prior_dists = [[dist_i[:, :-1] for dist_i in forward_mode_i]
                               for forward_mode_i in next_z_prior_dists]
 
-        # For MLP encoder
-        # true next observables at t=2 to T-1
-        # [(bs, seq_len - 2, num_colors)] * num_observables
-        next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
-        # inferenced next hidden at t=2 to T-1
-        # [(bs, seq_len - 2, num_colors)] * num_hiddens
-        # next_z_infer_probs = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
-        next_z_infer_probs = torch.split(z_probs[:, 2:], self.num_colors, dim=-1)
-
-        # # For masked MLP encoder
-        # # true next observables from t=2 to T-1
-        # # [[(bs, num_colors)] * num_observables] * (seq_len - 2)
-        # next_x = x[1:-1]
-        # # [(bs, seq_len - 2, num_colors)] * num_observables
-        # next_x = self.stack_dist(next_x)
-        # # inferenced next hidden from t=2 to T-1
-        # # [(bs, seq_len - 2, num_colors)] * 1
-        # next_z_infer_probs = [z[:, 2:]]
-        # # next_feature = (next_x[:self.hidden_objects_ind[0]] + next_z_infer_probs
-        # #                 + next_x[self.hidden_objects_ind[-1]:])
-
+        next_x, next_z_infer_probs = self.get_next_state(x, z_probs)
         if not self.update_num % (eval_freq * inference_gradient_steps):
             next_x_dists = next_x_dists[:2]
         recon, recon_detail = self.prediction_loss_from_multi_dist(next_x_dists, next_x, loss_type="recon")
@@ -1129,26 +1139,11 @@ class InferenceCMI(Inference):
             # z, z_probs, x, u, st, r = self.encoder(obs)
             bs, seq_len = z.shape[:2]
 
-            # For MLP encoder
-            # true next observables at t=2 to T-1
-            # [(bs, seq_len - 2, num_colors)] * num_observables
-            next_x = torch.split(x[:, 1:-1], self.num_colors, dim=-1)
+            next_x, next_z_infer_feature = self.get_next_state(x, z_probs)
             # (bs, seq_len - 2, num_observables, num_colors)
             x_label = torch.stack(next_x, dim=-2)
-            # inferenced next hidden at t=2 to T-1
-            # [(bs, seq_len - 2, num_colors)] * num_hiddens
-            # next_z_infer_feature = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
-            next_z_infer_feature = torch.split(z_probs[:, 2:], self.num_colors, dim=-1)
             # (bs, seq_len - 2, num_hiddens, num_colors)
             z_infer_probs = torch.stack(next_z_infer_feature, dim=-2)
-
-            # # For masked MLP encoder
-            # # true next observables from t=2 to T-1
-            # next_x = x[1:-1]
-            # # [(bs, seq_len - 2, num_colors)] * num_observables
-            # next_x = self.stack_dist(next_x)
-            # # [(bs, seq_len - 2, num_colors)] * 1
-            # next_z_infer_feature = [z[:, 2:]]
 
             for i in range(feature_dim + 1):
                 mask = self.get_eval_mask(bs, seq_len, i)  # (bs, feature_dim, feature_dim + 1)
