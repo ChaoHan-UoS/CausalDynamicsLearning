@@ -1,8 +1,8 @@
 {
-    "info": "noisy_free_history_encoder",
+    "info": "noisy_all_allfuture_1steppast_dvae_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
-    "seed": 1,
+    "seed": 2,
     "cuda_id": 0,
     "env_params": {
         "env_name": "Chemical",
@@ -54,8 +54,8 @@
             "g": "chain3",
             "match_type": "all",
             "dense_reward": true,
-            "noise_mask_ind": [],
-            "noise_p": [0.5, 0.0, 0.5]
+            "eps_mask_ind": [0, 1, 2],
+            "eps_p": [0.0, 1.0, 0.0]
         }
     },
     "training_params": {
@@ -72,7 +72,7 @@
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 5000,
-        "plot_freq": 1000,
+        "plot_freq": 500,
         "supervised_hidden_decoder": true,
         "replay_buffer_params": {
             "capacity": 10000000,
@@ -84,10 +84,10 @@
         }
     },
     "encoder_params": {
-        "use_all_past": true,
-        "use_all_future": false,
+        "use_all_past": false,
+        "use_all_future": true,
         "num_future": 0,
-        "num_past": 0,
+        "num_past": 1,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
         "num_rnn_g": 1,

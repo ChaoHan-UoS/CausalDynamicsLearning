@@ -123,7 +123,14 @@ class HiddenDecoder(nn.Module):
         recon_loss_detail = {"recon_loss": recon_loss}
         return recon_loss, recon_loss_detail
 
-def pred_state_acc(next_obs, next_hidden, pred_obs_dists, pred_hidden_dists):
+def pred_state_acc(next_obs, next_hidden, pred_obs_dists, pred_hidden_dists, keep_variable_dim=False):
+    """
+    :param next_obs/next_hidden: [(bs, seq_len - 2, num_colors)] * num_observables/num_hiddens
+    :param pred_obs_dists: [OneHotCategorical(bs, seq_len - 1, num_colors)] * num_observables
+    :param pred_hidden_dists: [(bs, seq_len - 1, num_colors)] * num_hiddens
+    :param keep_variable_dim: whether to keep the dimension of state variables which is dim=-1
+
+    """
     # states from t=2 to T-1
     # (bs, seq_len - 2, num_observables/num_hiddens)
     next_obs = torch.stack(next_obs, -1).argmax(-2)
@@ -131,8 +138,9 @@ def pred_state_acc(next_obs, next_hidden, pred_obs_dists, pred_hidden_dists):
     pred_obs = torch.stack([dist_i.probs[:, :-1].argmax(-1) for dist_i in pred_obs_dists], -1)
     pred_hidden = torch.stack(pred_hidden_dists, -1)[:, :-1].argmax(-2)
 
-    pred_obs_acc = (pred_obs == next_obs).float().mean()
-    pred_hidden_acc = (pred_hidden == next_hidden).float().mean()
+    mean_dim = (0, 1) if keep_variable_dim else None
+    pred_obs_acc = (pred_obs == next_obs).float().mean(dim=mean_dim)
+    pred_hidden_acc = (pred_hidden == next_hidden).float().mean(dim=mean_dim)
     return pred_obs_acc, pred_hidden_acc
 
 def train(params):
@@ -351,7 +359,7 @@ def train(params):
         intervention_mask = torch.ones(num_objects)
         intervention_mask[hidden_objects_ind] = 0
         adjacency_intervention = torch.cat((env.adjacency_matrix, intervention_mask.unsqueeze(-1)),
-                                           dim=-1)
+                                           dim=-1).to(device)
         edge_acc = (adjacency_intervention == inference.mask).float().mean()
         print(f'edge_acc: {edge_acc} \n')
 
@@ -370,10 +378,11 @@ def train(params):
         # states from t=2 to T-1
         # [(bs, seq_len - 2, num_colors)] * num_observables/num_hiddens
         next_obs, next_hidden = inference.get_next_state(obs, hidden_enc)
+        # predicted states from t=2 to T
         pred_obs_dists, pred_hidden_dists = inference.forward_with_feature(obs, hidden_enc, act,
                                                                            forward_mode=("causal",))
         pred_obs_acc, pred_hidden_acc = pred_state_acc(next_obs, next_hidden,
-                                                       pred_obs_dists, pred_hidden_dists)
+                                                       pred_obs_dists, pred_hidden_dists, keep_variable_dim=True)
         print(f'predicted observables accuracy: {pred_obs_acc}')
         print(f'predicted hiddens accuracy: {pred_hidden_acc} \n')
 
@@ -382,7 +391,7 @@ def train(params):
         print(f'reward prediction accuracy: {rew_loss}')
 
 if __name__ == "__main__":
-    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/chemical_full_dynamics_cmi_2024_09_11_17_33_06"
+    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_free_allfuture_dvae_encoder_2024_09_15_11_37_36"
     params_path = os.path.join(rslts_dir, "params.json")
     params = TrainingParams(training_params_fname=params_path, train=False)
     params.rslts_dir = rslts_dir

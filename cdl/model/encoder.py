@@ -865,6 +865,7 @@ class Encoder(nn.Module):
         self.num_colors = chemical_env_params.num_colors
         self.num_hidden_objects = len(self.hidden_objects_ind)
         self.num_obs_objects = self.num_objects - len(self.hidden_objects_ind)
+        self.eps_dim = len(chemical_env_params.eps_p)
 
         self.o_keys = params.obs_keys[:self.num_obs_objects]
         self.o_inner_dim = np.concatenate([params.obs_dims[key] for key in self.o_keys])
@@ -872,8 +873,11 @@ class Encoder(nn.Module):
         self.ot_inner_dim = np.concatenate([params.obs_dims[key] for key in self.ot_keys])
         self.a_key, self.r_key = 'act', 'rew'
         self.a_inner_dim = params.action_dim
-        self.feature_dim = self.num_objects
-        self.feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
+        self.feature_in_dim = 2 * self.num_objects
+        self.feature_out_dim = self.num_objects
+        feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
+        self.feature_in_inner_dim = np.concatenate([feature_inner_dim, np.full(self.eps_dim, self.num_objects)])
+        self.feature_out_inner_dim = feature_inner_dim
 
         # hindsight-based encoder implemented by masked MLP
         self.feedforward_enc_params = params.encoder_params.feedforward_enc_params
@@ -905,7 +909,7 @@ class Encoder(nn.Module):
         # self.zxu_dim = zxu_dim = 2 * self.num_colors + self.a_inner_dim
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
         self.xxui_dim = xxui_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + self.seq_len
-        self.xxuz_dim = xxuz_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + self.z_dim
+        self.xzuxz_dim = xzuxz_dim = self.o_inner_dim.sum() + self.z_dim + self.a_inner_dim + self.num_colors
         self.hh_dim = hh_dim = 2 * self.num_colors
         self.xz_dim = xz_dim = 2 * (self.o_inner_dim.sum() + self.num_colors)
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
@@ -918,10 +922,15 @@ class Encoder(nn.Module):
         # self.rnn_g = nn.LSTM(xxuz_dim, dim_rnn_g, num_rnn_g, batch_first=True)
         # self.rnn_g = nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True)
 
-        # independent MLP for each hidden object
+        # independent RNN for each hidden object
         self.rnn_g = nn.ModuleList()
         for i in range(self.num_hidden_objects):
             self.rnn_g.append(nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True))
+
+        # independent RNN for each noise
+        self.rnn_e = nn.ModuleList()
+        for i in range(self.num_objects):
+            self.rnn_e.append(nn.LSTM(xzuxz_dim, dim_rnn_g, num_rnn_g, batch_first=True))
 
         # # independent MLP for each hidden object and time step
         # self.rnn_g = nn.ModuleList()
@@ -1010,6 +1019,21 @@ class Encoder(nn.Module):
                 dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], self.num_colors)
                 cf_n_h.append(nn.Sequential(dic_layers))
             self.cf_n.append(cf_n_h)
+
+        # independent MLP for each noise following RNN
+        self.mlp_e = nn.ModuleList()
+        for j in range(self.num_objects):
+            dic_layers = OrderedDict()
+            for n in range(len(dims_cf_n)):
+                if n == 0:
+                    dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                else:
+                    dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
+                dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
+                dic_layers['activation' + str(n)] = nn.ReLU()
+                dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
+            dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], self.eps_dim)
+            self.mlp_e.append(nn.Sequential(dic_layers))
 
         params = self.params
         feedforward_enc_params = self.feedforward_enc_params
@@ -1168,7 +1192,7 @@ class Encoder(nn.Module):
 
     def predict_from_sa_feature(self, sa_feature, residual_base=None):
         """
-        predict the distribution and sample for the next step value of all state variables
+        predict the distribution for the next step value of all state variables
         :param sa_feature: (num_hidden_objects, bs, out_dim)
         :param residual_base: (bs, feature_dim), residual used for continuous state variable prediction
         :return: if state space is continuous: a Normal distribution of shape (bs, feature_dim)
@@ -1371,6 +1395,8 @@ class Encoder(nn.Module):
                 u: (bs, seq_len, num_observables)
                 st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
                 r: (bs, seq_len - 2, 1)
+                eps: (bs, seq_len, num_objects * eps_dim)
+                min_eps: scalar
         """
         o, a, ot, r = self.preprocess(obs)
         x = o
@@ -1378,8 +1404,14 @@ class Encoder(nn.Module):
         u[:, 1:] = a[:, :-1]
 
         bs, seq_len = a.shape[:2]
-        z_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1, self.z_dim).to(self.device)
         z = torch.zeros(bs, seq_len - self.num_hidden_objects + 1, self.z_dim).to(self.device)
+        z_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1, self.z_dim).to(self.device)
+        eps = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
+                          self.num_objects * self.eps_dim).to(self.device)
+        eps_xzu_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
+                                    self.num_objects * self.eps_dim).to(self.device)
+        eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
+                                      self.num_objects * self.eps_dim).to(self.device)
 
         # x_{t:T}, u_{t:T} -> g_t;
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
@@ -1391,7 +1423,8 @@ class Encoder(nn.Module):
             # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
             # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
             # xxu = torch.cat((x_tm1, x, u), -1)
-            xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
+            # xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
+            xu = torch.cat((x, a), -1)
             g_h = []
             for j in range(self.num_hidden_objects):
                 g, _ = self.rnn_g[j](torch.flip(xu, [1]) if self.use_all_future else xu)
@@ -1418,8 +1451,8 @@ class Encoder(nn.Module):
                 if self.use_all_past:
                     n = self.cf_n[0][j](g_h[j][:, i - 1])
                 elif self.use_all_future:
-                    mg = torch.cat((m, g_h[j][:, i]), -1) if (self.num_past > 0 and i > 1) \
-                        else g_h[j][:, i]
+                    mg = torch.cat((m, g_h[j][:, i - 1]), -1) if (self.num_past > 0 and i > 1) \
+                        else g_h[j][:, i - 1]
                     n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
                 elif self.num_future > 0:
                     g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
@@ -1438,7 +1471,37 @@ class Encoder(nn.Module):
         # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
         st = torch.split(st, self.num_colors, dim=-1)
         r = r[:, :-1]
-        return z, z_probs, x, u, st, r
+
+        # z_detach = z.detach()
+        z_detach = z
+        xzu_tm1 = torch.cat((x_tm1, z_detach, u), -1)
+        xz = torch.cat((x[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
+                        z_detach[:, 1:], x[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), -1)
+        for i in range(1, seq_len - 1):
+            for j in range(self.num_objects):
+                xzuxz = torch.cat((xzu_tm1[:, i: (i + 1)],
+                                   xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]), -1)
+                g, _ = self.rnn_e[j](torch.flip(xzuxz, [1]))
+                g = torch.flip(g, [1])
+                n = self.mlp_e[j](g[:, 0])
+                # t=1 to T-2
+                eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
+                # eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = n
+
+                xzu = torch.cat((xzu_tm1[:, i: (i + 1)],
+                                 torch.zeros_like(xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors])), -1)
+                g, _ = self.rnn_e[j](torch.flip(xzu, [1]))
+                g = torch.flip(g, [1])
+                n = self.mlp_e[j](g[:, 0])
+                eps_xzu_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+
+                all_zeros = torch.zeros_like(xzu)
+                g, _ = self.rnn_e[j](torch.flip(all_zeros, [1]))
+                g = torch.flip(g, [1])
+                n = self.mlp_e[j](g[:, 0])
+                eps_zeros_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+
+        return z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_zeros_probs
 
     # def forward(self, obs, forward_with_feature):
     #     """

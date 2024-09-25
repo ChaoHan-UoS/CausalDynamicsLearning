@@ -1030,9 +1030,11 @@ class Chemical(gym.Env):
                                  if i not in chemical_env_params.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
 
-        self.noise_mask_ind = chemical_env_params.noise_mask_ind
-        self.noise_p = chemical_env_params.noise_p
-        self.noise_p_len = len(self.noise_p)
+        self.eps_mask_ind = chemical_env_params.eps_mask_ind
+        self.eps_p = chemical_env_params.eps_p
+        self.eps_mask = torch.zeros(self.num_objects)
+        self.eps_mask[self.eps_mask_ind] = 1
+        self.eps_range = list(range(-(len(self.eps_p) // 2), (len(self.eps_p) // 2) + 1))
 
         self.set_graph(chemical_env_params.g)
 
@@ -1068,14 +1070,11 @@ class Chemical(gym.Env):
         # s_t1 = torch.fmod(torch.matmul(self.adjacency_matrix, s_t) + h + a_t, self.num_colors)
         # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.np_random.choice([-2, -1, 0, 1, 2],
         #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
-        noise_mask = torch.zeros(self.num_objects)
-        noise_mask[self.noise_mask_ind] = 1
-        noise_range = list(range(-(self.noise_p_len // 2), (self.noise_p_len // 2) + 1))
 
-        # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + noise_mask * self.np_random.choice(
-        #     noise_range, self.num_objects, p=self.noise_p)
-        s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + noise_mask * self.np_random.choice(
-            noise_range, p=self.noise_p)
+        s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.eps_mask * self.np_random.choice(
+            self.eps_range, self.num_objects, p=self.eps_p)
+        # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.eps_mask * self.np_random.choice(
+        #     self.eps_range, p=self.eps_p)
         s_t1 = torch.fmod(s_, self.num_colors)
         s_t1[s_t1 == -1] = self.num_colors - 1
         s_t1[s_t1 == -2] = self.num_colors - 2

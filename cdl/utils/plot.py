@@ -202,11 +202,10 @@ def plot_adjacency_intervention_mask(params, model, writer, step):
     intervention_mask = to_numpy(intervention_mask)
     adjacency_intervention = np.concatenate([adjacency, intervention_mask], axis=-1)
 
-    obs_keys = params.obs_keys
-    obs_spec = params.obs_spec
-    feature_dim, action_dim = intervention_mask.shape
+    feature_out_dim, action_dim = intervention_mask.shape
+    feature_in_dim = adjacency.shape[1]
 
-    fig = plt.figure(figsize=((feature_dim + action_dim) * 0.45 + 2, feature_dim * 0.45 + 2))
+    fig = plt.figure(figsize=((feature_in_dim + action_dim) * 0.45 + 2, feature_out_dim * 0.45 + 2))
 
     use_cmi = params.training_params.inference_algo == "cmi"
     vmax = params.inference_params.cmi_params.CMI_threshold if use_cmi else 1.0
@@ -218,23 +217,9 @@ def plot_adjacency_intervention_mask(params, model, writer, step):
 
     ax = plt.gca()
     ax.tick_params(axis="x", bottom=True, top=True, labelbottom=True, labeltop=True)
-    if params.encoder_params.encoder_type == "identity":
-        tick_loc = []
-        cum_idx = 0
-        for k in obs_keys:
-            obs_dim = obs_spec[k].shape[0]
-            tick_loc.append(cum_idx + obs_dim * 0.5)
-            cum_idx += obs_dim
-            plt.vlines(cum_idx, ymin=0, ymax=feature_dim, colors='blue', linewidths=3)
-            if k != obs_keys[-1]:
-                plt.hlines(cum_idx, xmin=0, xmax=feature_dim + action_dim, colors='blue', linewidths=3)
-
-        plt.xticks(tick_loc + [feature_dim + 0.5 * action_dim], obs_keys + ["action"], rotation=90)
-        plt.yticks(tick_loc, obs_keys, rotation=0)
-    else:
-        plt.vlines(feature_dim, ymin=0, ymax=feature_dim, colors='blue', linewidths=3)
-        plt.xticks([0.5 * feature_dim, feature_dim + 0.5 * action_dim], ["feature", "action"],
-                   rotation=90)
+    plt.vlines(feature_in_dim, ymin=0, ymax=feature_out_dim, colors='blue', linewidths=3)
+    plt.xticks([0.25 * feature_in_dim, 0.75 * feature_in_dim, feature_in_dim + 0.5 * action_dim],
+               ["feature", "noise", "action"], rotation=90)
     fig.tight_layout()
     writer.add_figure("adjacency", fig, step + 1)
     plt.close("all")
