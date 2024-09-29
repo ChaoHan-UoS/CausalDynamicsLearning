@@ -1,4 +1,4 @@
-ls#!/bin/bash
+#!/bin/bash
 #SBATCH --job-name=noisy_free
 #SBATCH --partition=gpu-h100
 #SBATCH --qos=gpu  
