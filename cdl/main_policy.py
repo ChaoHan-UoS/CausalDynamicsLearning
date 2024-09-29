@@ -18,7 +18,7 @@ from model.inference_gnn import InferenceGNN
 from model.inference_reg import InferenceReg
 from model.inference_nps import InferenceNPS
 from model.inference_cmi import InferenceCMI
-from model.inference_utils import obs_batch_dict2tuple, count2prob, count2prob_llh
+# from model.inference_utils import obs_batch_dict2tuple, count2prob, count2prob_llh
 
 from model.random_policy import RandomPolicy
 from model.hippo import HiPPO
@@ -27,8 +27,8 @@ from model.model_based import ModelBased
 from model.encoder import Encoder
 from model.decoder import rew_decoder
 
-from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
-    get_start_step_from_model_loading, preprocess_obs, postprocess_obs
+from utils.utils import (TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env,
+                         get_start_step_from_model_loading, preprocess_obs, postprocess_obs)
 # from utils.replay_buffer import ReplayBuffer, PrioritizedReplayBuffer  # use tianshou's buffer instead
 from utils.plot import plot_adjacency_intervention_mask
 from utils.scripted_policy import get_scripted_policy, get_is_demo
@@ -335,8 +335,8 @@ def train(params):
             else:
                 policy.setup_annealing(step)
                 for i_grad_step in range(policy_gradient_steps):
-                    obs_batch, actions_batch, rewards_batch, idxes_batch = \
-                        replay_buffer.sample_model_based(policy_params.batch_size)
+                    obs_batch, actions_batch, rewards_batch, idxes_batch = (
+                        replay_buffer.sample_model_based(policy_params.batch_size))
 
                     loss_detail = policy.update(obs_batch, actions_batch, rewards_batch)
                     if use_prioritized_buffer:

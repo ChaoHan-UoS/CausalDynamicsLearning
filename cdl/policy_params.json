@@ -54,8 +54,9 @@
             "g": "chain3",
             "match_type": "all",
             "dense_reward": true,
+            "multi_eps": false,
             "eps_mask_ind": [0, 1, 2],
-            "eps_p": [0.0, 1.0, 0.0]
+            "eps_p": [0.5, 0.0, 0.5]
         }
     },
     "training_params": {
@@ -100,6 +101,8 @@
             "anneal_steps": 10000,
             "anneal_rate": 0.00001
         },
+        "eps_encoder": false,
+        "count_transitions": false,
         "encoder_type": "feedforward",
         "recurrent_enc_params": {
             "layer_num": 2,

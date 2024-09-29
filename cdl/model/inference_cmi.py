@@ -542,10 +542,13 @@ class InferenceCMI(Inference):
             # # [(bs, num_observables)] * 1
             # action = torch.unbind(u, dim=1)
         else:
+            feature_parts = [x[:, :-2, :self.hidden_objects_ind[0] * self.num_colors],
+                             z[:, 1:-1],
+                             x[:, :-2, self.hidden_objects_ind[0] * self.num_colors:]]
+            if eps is not None:
+                feature_parts.append(eps[:, 1:-1])
             # (bs, seq_len - 2, num_objects * (num_colors + eps_dim))
-            feature = torch.cat((x[:, :-2, :self.hidden_objects_ind[0] * self.num_colors],
-                                 z[:, 1:-1], x[:, :-2, self.hidden_objects_ind[0] * self.num_colors:],
-                                 eps[:, 1:-1]), dim=-1)
+            feature = torch.cat(feature_parts, dim=-1)
             # [(bs, num_objects * (num_colors + eps_dim))] * (seq_len - 2)
             feature = torch.unbind(feature, dim=1)
             # states from t=1 to T-2
@@ -797,27 +800,21 @@ class InferenceCMI(Inference):
 
         return rew_loss, rew_loss_detail
 
-    def mi_eps_loss(self, eps_xzu_probs, eps_zeros_probs):
+    def mi_eps_loss(self, eps_xzu_probs, eps_probs):
         """
         calculate mutual information between eps_t^i and {o_t, h_t, a_t}
-        :param eps_xzu_probs / eps_zeros_probs: (bs, seq_len, num_objects * eps_dim)
+        :param eps_xzu_probs: (bs * (seq_len - 2), num_objects, eps_dim)
+        :param eps_probs: (bs * (seq_len - 2), num_objects, eps_dim)
         :return mi_eps: scalar tensor
         """
-        # [(bs, seq_len - 2, eps_dim)] * num_objects
-        eps_xzu_probs = torch.split(eps_xzu_probs[:, 1:-1], self.eps_dim, dim=-1)
-        eps_zeros_probs = torch.split(eps_zeros_probs[:, 1:-1], self.eps_dim, dim=-1)
-        # (bs, seq_len - 2, num_objects, eps_dim)
-        eps_xzu_probs = torch.stack(eps_xzu_probs, dim=-2)
-        eps_zeros_probs = torch.stack(eps_zeros_probs, dim=-2)
-
         if not self.update_num % 2000:
-            print("eps_xzu_probs", eps_xzu_probs[:2])
-            print("eps_zeros_probs", eps_zeros_probs[:2])
+            print("eps_xzu_probs", eps_xzu_probs[:5])
+            print("eps_probs", eps_probs[:5])
 
-        # summed over eps_dim for KL; (bs, seq_len - 2, num_objects)
+        # summed over eps_dim for KL; (bs * (seq_len - 2), num_objects)
         mi_eps = torch.sum(eps_xzu_probs * (torch.log(eps_xzu_probs + 1e-20) -
-                                            torch.log(eps_zeros_probs + 1e-20)), dim=-1)
-        mi_eps = 100 * mi_eps.sum((-1, -2)).mean()
+                                            torch.log(eps_probs + 1e-20)), dim=-1)
+        mi_eps = 1 * mi_eps.sum(-1).mean()
         return mi_eps
 
     # def backprop(self, loss, loss_detail):
@@ -970,7 +967,14 @@ class InferenceCMI(Inference):
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
 
-        z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_zeros_probs = self.encoder(obs)
+        eps, mi_eps, eps_details = None, None, {}
+        if self.encoder_params.eps_encoder:
+            z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs = self.encoder(obs)
+            if eps_probs is not None:
+                mi_eps = self.mi_eps_loss(eps_xzu_probs, eps_probs)
+                eps_details["mi_eps"] = mi_eps
+        else:
+            z, z_probs, x, u, st, r = self.encoder(obs)
         bs, seq_len = z.shape[:2]
         mask = self.get_training_mask(bs, seq_len)  # (bs, seq_len, feature_out_dim, feature_in_dim + 1)
         # predicted next observables from t=2 to T-1
@@ -990,10 +994,6 @@ class InferenceCMI(Inference):
         rew_loss, rew_loss_detail = self.rew_loss_from_feature(st, r)
         # rew_loss, rew_loss_detail = torch.tensor(0.), {"rew_loss": torch.tensor(0.)}
 
-        mi_eps = self.mi_eps_loss(eps_xzu_probs, eps_zeros_probs)
-        eps_details = {}
-        eps_details["mi_eps"] = mi_eps
-
         # # hidden from t=1 to T-1
         # # (bs, seq_len - 1)
         # hidden_label = hidden['obj1'][:, :-1].squeeze(-1).long()
@@ -1005,9 +1005,10 @@ class InferenceCMI(Inference):
         # hidden_loss_detail = {"hidden_loss": hidden_loss}
 
         # loss = recon + kl + rew_loss
-        nelbo = recon + recon_h + mi_eps
+        nelbo = recon + recon_h + mi_eps if mi_eps is not None else recon + recon_h
         # loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **hidden_loss_detail}
-        loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details}
+        loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details} \
+            if mi_eps is not None else {**recon_detail, **recon_h_detail, **rew_loss_detail}
 
         # if not eval and torch.isfinite(nelbo):
         #     self.backprop(nelbo, loss_detail)
@@ -1192,8 +1193,18 @@ class InferenceCMI(Inference):
         next_z_prior_masked_ = []
         masked_recon_ = []
         masked_recon_h_ = []
+        eps = None
         with (torch.no_grad()):
-            z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_zeros_probs = self.encoder(obs)
+            if self.encoder_params.eps_encoder:
+                z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs = self.encoder(obs)
+
+                # t=1 to T-2
+                # [(bs, seq_len - 2, eps_dim)] * num_objects
+                encoded_eps = torch.split(eps[:, 1:-1], self.eps_dim, dim=-1)
+                # (bs, seq_len - 2, num_objects, eps_dim)
+                encoded_eps = torch.stack(encoded_eps, dim=-2)
+            else:
+                z, z_probs, x, u, st, r = self.encoder(obs)
             bs, seq_len = z.shape[:2]
 
             # t=2 to T-1
@@ -1202,12 +1213,6 @@ class InferenceCMI(Inference):
             x_label = torch.stack(next_x, dim=-2)
             # (bs, seq_len - 2, num_hiddens, num_colors)
             z_infer_probs = torch.stack(next_z_infer_feature, dim=-2)
-
-            # t=1 to T-2
-            # [(bs, seq_len - 2, eps_dim)] * num_objects
-            encoded_eps = torch.split(eps[:, 1:-1], self.eps_dim, dim=-1)
-            # (bs, seq_len - 2, num_objects, eps_dim)
-            encoded_eps = torch.stack(encoded_eps, dim=-2)
 
             for i in range(feature_in_dim + 1):
                 mask = self.get_eval_mask(bs, seq_len, i)  # (bs, feature_out_dim, feature_in_dim + 1)
@@ -1369,7 +1374,7 @@ class InferenceCMI(Inference):
             print("x_label", x_label[:2])
             print("predicted_x", predicted_x[:2])
             print("encoded_z", z_infer_probs[:2])
-            print("encoded_eps", encoded_eps[:2])
+            print("encoded_eps", encoded_eps[:2]) if self.encoder_params.eps_encoder else None
             print("predicted_z", next_z_prior_full.squeeze(-2)[:2])
             print("next_true_hidden", next_hidden[:20].permute(1, 2, 0))
             print("next_enco_hidden", next_feature_hidden[:20].permute(1, 2, 0))

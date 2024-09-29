@@ -1030,6 +1030,7 @@ class Chemical(gym.Env):
                                  if i not in chemical_env_params.hidden_objects_ind]
         self.action_dim = len(self.partial_act_dims)
 
+        self.multi_eps = chemical_env_params.multi_eps
         self.eps_mask_ind = chemical_env_params.eps_mask_ind
         self.eps_p = chemical_env_params.eps_p
         self.eps_mask = torch.zeros(self.num_objects)
@@ -1072,9 +1073,7 @@ class Chemical(gym.Env):
         #                                                                             p=[0.0, 0.0, 1, 0.0, 0.0])
 
         s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.eps_mask * self.np_random.choice(
-            self.eps_range, self.num_objects, p=self.eps_p)
-        # s_ = torch.matmul(self.adjacency_matrix, s_t) + a_t + self.eps_mask * self.np_random.choice(
-        #     self.eps_range, p=self.eps_p)
+            self.eps_range, self.num_objects if self.multi_eps else 1, p=self.eps_p)
         s_t1 = torch.fmod(s_, self.num_colors)
         s_t1[s_t1 == -1] = self.num_colors - 1
         s_t1[s_t1 == -2] = self.num_colors - 2

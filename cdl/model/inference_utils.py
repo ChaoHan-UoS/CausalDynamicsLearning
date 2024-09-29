@@ -150,24 +150,31 @@ def get_state_abstraction(mask):
     return abstraction_graph
 
 
-def obs_batch_dict2tuple(obs, params):
+def obs_batch2tuple(obs, params):
     """
-    :param obs: Batch(obs_i_key: (bs, stack_num, (n_pred_step), obs_i_shape))
-    :return: oa_batch / next_o_batch: [tuple('obs_i_key', (obs_i_value,))] * bs
+    :param obs: Batch(obs_i_key: (bs, seq_len, obs_i_shape))
+    :return: oa_tuple: [tuple(tuple('obs_i_key', (obs_i_value,)))] * (bs * (seq_len - 2))
     """
-    bs = len(obs[next(iter(dict(obs)))])
+    obs_v = obs[next(iter(dict(obs)))]
+    bs, seq_len = obs_v.shape[:2]
 
-    # convert to a bs length list of tuples for hashing
-    oa = {k: obs[k] for k in params.obs_keys_f + ['act'] if k in obs}
-    oa_batch = [tuple((k, (v[i, 1].squeeze().item(),))
-                      for k, v in oa.items())
-                for i in range(bs)]
-    next_o = {k: obs[k] for k in params.obs_keys_f if k in obs}
-    next_o_batch = [tuple((k, (v[i, 2].squeeze().item(),))
-                          for k, v in next_o.items())
-                    for i in range(bs)]
+    # convert to a list of tuples for hashing, with len(list) = bs * (seq_len -2)
+    # {obs_i_key: (bs * (seq_len - 2), obs_i_shape)}; t=1 to T-2
+    oa = {k: obs[k][:, :-2].reshape(-1, obs[k].shape[-1]) for k in params.obs_keys_f + ['act'] if k in obs}
+    oa_tuple = [tuple((k, (v[i].item(),)) for k, v in oa.items())
+                for i in range(bs * (seq_len - 2))]
+    return oa_tuple
 
-    return oa_batch, next_o_batch
+
+def hidden_batch2tuple(h):
+    """
+    :param h: (bs, seq_len, num_hiddens * num_colors)
+    :return: h_tuple: [tuple(num_hiddens * num_colors,)] * (bs * (seq_len -2))
+    """
+    # (bs * (seq_len - 2), num_hiddens * num_colors); t=1 to T-2
+    h = h[:, 1:-1].reshape(-1, h.shape[-1])
+    h_tuple = [tuple(h[i].tolist()) for i in range(h.shape[0])]
+    return h_tuple
 
 
 def count2prob(counter):
@@ -180,10 +187,29 @@ def count2prob(counter):
     return probs
 
 
-def count2prob_llh(probs, batch):
+def prob2llh(probs, keys):
     """
     :param probs: {key_i: prob_i}
-    :param batch: [key] * bs
-    :return: (bs, ) likelihoods
+    :param keys: [key] * len
+    :return: (len, ) tensor as likelihood
     """
-    return torch.tensor([probs[k] for k in batch])
+    return torch.tensor([probs[k] for k in keys])
+
+
+def rm_dup(tup_list):
+    # Dictionary to keep track of seen tuples and their indices
+    seen = {}
+    dups = []
+
+    # Identify indices of duplicate tuples
+    for idx, item in enumerate(tup_list):
+        if item in seen:
+            dups.append(idx)
+        else:
+            seen[item] = idx
+
+    # mask in unique tuples
+    mask = [i for i in range(len(tup_list)) if i not in dups]
+    uni_tups = [tup_list[i] for i in mask]
+
+    return mask, uni_tups

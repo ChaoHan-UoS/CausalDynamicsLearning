@@ -17,8 +17,8 @@ from model.inference_cmi import InferenceCMI
 from model.encoder import Encoder
 from model.decoder import rew_decoder
 
-from utils.utils import TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env, \
-    get_start_step_from_model_loading, preprocess_obs, postprocess_obs
+from utils.utils import (TrainingParams, update_obs_act_spec, set_seed_everywhere, get_env,
+                         get_start_step_from_model_loading, preprocess_obs, postprocess_obs)
 from utils.scripted_policy import get_scripted_policy, get_is_demo
 
 from tianshou.data import Batch, ReplayBuffer, to_torch

@@ -1,6 +1,6 @@
 import sys
 
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import numpy as np
 
 import torch
@@ -10,8 +10,8 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.one_hot_categorical import OneHotCategorical
 
-from model.inference_utils import reset_layer, forward_network, forward_network_batch
-
+from model.inference_utils import (reset_layer, forward_network, forward_network_batch,
+                                   obs_batch2tuple, hidden_batch2tuple, count2prob, prob2llh, rm_dup)
 
 def reset_layer_lstm(w, b=None):
     # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
@@ -856,6 +856,8 @@ class Encoder(nn.Module):
         self.device = params.device
         self.encoder_params = params.encoder_params
         self.gumbel_temp = self.encoder_params.gumbel_softmax_params.gumbel_temp_0
+        self.eps_encoder = self.encoder_params.eps_encoder
+        self.count_transitions = self.encoder_params.count_transitions
 
         chemical_env_params = params.env_params.chemical_env_params
         self.hidden_objects_ind = chemical_env_params.hidden_objects_ind
@@ -873,10 +875,11 @@ class Encoder(nn.Module):
         self.ot_inner_dim = np.concatenate([params.obs_dims[key] for key in self.ot_keys])
         self.a_key, self.r_key = 'act', 'rew'
         self.a_inner_dim = params.action_dim
-        self.feature_in_dim = 2 * self.num_objects
+        self.feature_in_dim = 2 * self.num_objects if self.eps_encoder else self.num_objects
         self.feature_out_dim = self.num_objects
         feature_inner_dim = np.concatenate([params.obs_dims_f[key] for key in params.obs_keys_f])
-        self.feature_in_inner_dim = np.concatenate([feature_inner_dim, np.full(self.eps_dim, self.num_objects)])
+        self.feature_in_inner_dim = np.concatenate([feature_inner_dim, np.full(self.num_objects, self.eps_dim)]) \
+            if self.eps_encoder else feature_inner_dim
         self.feature_out_inner_dim = feature_inner_dim
 
         # hindsight-based encoder implemented by masked MLP
@@ -893,6 +896,10 @@ class Encoder(nn.Module):
         self.use_all_future = self.encoder_params.use_all_future
         self.num_future = self.encoder_params.num_future
         self.num_past = self.encoder_params.num_past
+
+        self.xuz_counts = Counter()
+        self.xuz_probs = {}
+        self.update_num = 0
 
         self.init_model()
         self.reset_params()
@@ -1396,8 +1403,10 @@ class Encoder(nn.Module):
                 st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
                 r: (bs, seq_len - 2, 1)
                 eps: (bs, seq_len, num_objects * eps_dim)
-                min_eps: scalar
+                eps_xzu_probs: (bs, seq_len, num_objects * eps_dim)
+                xuz_llh: (bs * (seq_len - 2), )
         """
+        self.update_num += 1
         o, a, ot, r = self.preprocess(obs)
         x = o
         u = torch.zeros_like(a)
@@ -1410,8 +1419,8 @@ class Encoder(nn.Module):
                           self.num_objects * self.eps_dim).to(self.device)
         eps_xzu_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
                                     self.num_objects * self.eps_dim).to(self.device)
-        eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
-                                      self.num_objects * self.eps_dim).to(self.device)
+        # eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
+        #                               self.num_objects * self.eps_dim).to(self.device)
 
         # x_{t:T}, u_{t:T} -> g_t;
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
@@ -1472,36 +1481,72 @@ class Encoder(nn.Module):
         st = torch.split(st, self.num_colors, dim=-1)
         r = r[:, :-1]
 
-        # z_detach = z.detach()
-        z_detach = z
-        xzu_tm1 = torch.cat((x_tm1, z_detach, u), -1)
-        xz = torch.cat((x[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
-                        z_detach[:, 1:], x[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), -1)
-        for i in range(1, seq_len - 1):
-            for j in range(self.num_objects):
-                xzuxz = torch.cat((xzu_tm1[:, i: (i + 1)],
-                                   xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]), -1)
-                g, _ = self.rnn_e[j](torch.flip(xzuxz, [1]))
-                g = torch.flip(g, [1])
-                n = self.mlp_e[j](g[:, 0])
-                # t=1 to T-2
-                eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
-                # eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = n
+        if not self.eps_encoder:
+            return z, z_probs, x, u, st, r
+        else:
+            # z_detach = z.detach()
+            z_detach = z
+            xzu_tm1 = torch.cat((x_tm1, z_detach, u), -1)
+            xz = torch.cat((x[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
+                            z_detach[:, 1:], x[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), -1)
+            for i in range(1, seq_len - 1):
+                for j in range(self.num_objects):
+                    xzuxz = torch.cat((xzu_tm1[:, i: (i + 1)],
+                                       xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]), -1)
+                    g, _ = self.rnn_e[j](torch.flip(xzuxz, [1]))
+                    g = torch.flip(g, [1])
+                    n = self.mlp_e[j](g[:, 0])
+                    # t=1 to T-2
+                    eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
+                    # eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = n
 
-                xzu = torch.cat((xzu_tm1[:, i: (i + 1)],
-                                 torch.zeros_like(xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors])), -1)
-                g, _ = self.rnn_e[j](torch.flip(xzu, [1]))
-                g = torch.flip(g, [1])
-                n = self.mlp_e[j](g[:, 0])
-                eps_xzu_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+                    xzu = torch.cat((xzu_tm1[:, i: (i + 1)],
+                                     torch.zeros_like(xz[:, i: (i + 1),
+                                                      j * self.num_colors: (j + 1) * self.num_colors])), -1)
+                    g, _ = self.rnn_e[j](torch.flip(xzu, [1]))
+                    g = torch.flip(g, [1])
+                    n = self.mlp_e[j](g[:, 0])
+                    eps_xzu_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
 
-                all_zeros = torch.zeros_like(xzu)
-                g, _ = self.rnn_e[j](torch.flip(all_zeros, [1]))
-                g = torch.flip(g, [1])
-                n = self.mlp_e[j](g[:, 0])
-                eps_zeros_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+                    # all_zeros = torch.zeros_like(xzu)
+                    # g, _ = self.rnn_e[j](torch.flip(all_zeros, [1]))
+                    # g = torch.flip(g, [1])
+                    # n = self.mlp_e[j](g[:, 0])
+                    # eps_zeros_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
 
-        return z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_zeros_probs
+            # Batch-wise update the counting-based probability of each tuple (obs, action, hidden)
+            # and compute the likelihood of each tuple in the batch
+            if self.count_transitions:
+                # self.xuz_counts = Counter()
+                # self.xuz_probs = {}
+                oa_tuple = obs_batch2tuple(obs, self.params)
+                h_tuple = hidden_batch2tuple(z)
+                oah_batch = [oa + (h,) for oa, h in zip(oa_tuple, h_tuple)]
+                mask, oah_batch_uni = rm_dup(oah_batch)
+
+                # [(bs, seq_len - 2, eps_dim)] * num_objects
+                eps_xzu_probs = torch.split(eps_xzu_probs[:, 1:-1], self.eps_dim, dim=-1)
+                # (bs * (seq_len - 2), num_objects, eps_dim)
+                eps_xzu_probs = torch.stack(eps_xzu_probs, dim=-2).view(-1, self.num_objects, self.eps_dim)
+                # (bs_uni, num_objects, eps_dim)
+                eps_xzu_probs_uni = eps_xzu_probs[mask]
+
+                self.xuz_counts.update(oah_batch)
+                self.xuz_probs = count2prob(self.xuz_counts)
+                xuz_llh = prob2llh(self.xuz_probs, oah_batch_uni).to(self.device)
+                # (bs_uni, 1, 1)
+                xuz_probs = xuz_llh.unsqueeze(-1).unsqueeze(-1)
+                # (num_objects, eps_dim)
+                eps_probs = (eps_xzu_probs_uni * xuz_probs).sum(0)
+                # (bs * (seq_len - 2), num_objects, eps_dim)
+                eps_probs = eps_probs.unsqueeze(0).expand(len(oah_batch), -1, -1).detach()
+            else:
+                eps_probs = None
+
+            if not self.update_num % 1000:
+                print("xuz_llh", xuz_llh, len(xuz_llh))
+
+            return z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs
 
     # def forward(self, obs, forward_with_feature):
     #     """
