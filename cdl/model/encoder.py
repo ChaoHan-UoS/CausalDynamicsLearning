@@ -909,7 +909,7 @@ class Encoder(nn.Module):
         self.seq_len = self.params.training_params.replay_buffer_params.stack_num
         self.z_dim = z_dim = self.num_hidden_objects * self.num_colors
         self.xu_dim = xu_dim = self.o_inner_dim.sum() + self.a_inner_dim
-        # self.xu_dim = xu_dim = 2 * self.num_colors + self.a_inner_dim
+        # self.xu_dim = xu_dim = self.o_inner_dim[:2].sum() + 2
         self.dim_rnn_g = dim_rnn_g = self.encoder_params.dim_rnn_g
         self.num_rnn_g = num_rnn_g = self.encoder_params.num_rnn_g
         self.zxu_dim = zxu_dim = self.z_dim + self.o_inner_dim.sum() + self.a_inner_dim
@@ -932,7 +932,8 @@ class Encoder(nn.Module):
         # independent RNN for each hidden object
         self.rnn_g = nn.ModuleList()
         for i in range(self.num_hidden_objects):
-            self.rnn_g.append(nn.LSTM(xu_dim, dim_rnn_g, num_rnn_g, batch_first=True))
+            self.rnn_g.append(nn.LSTM(xu_dim if self.use_all_future or self.use_all_past else xxu_dim,
+                                      dim_rnn_g, num_rnn_g, batch_first=True))
 
         # independent RNN for each noise
         self.rnn_e = nn.ModuleList()
@@ -1433,6 +1434,7 @@ class Encoder(nn.Module):
             # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
             # xxu = torch.cat((x_tm1, x, u), -1)
             # xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
+            # xu = torch.cat((x[:, :, :2 * self.num_colors], a[:, :, :2]), -1)
             xu = torch.cat((x, a), -1)
             g_h = []
             for j in range(self.num_hidden_objects):
