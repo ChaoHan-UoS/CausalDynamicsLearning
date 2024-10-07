@@ -1,5 +1,5 @@
 {
-    "info": "noisy_free_single_allfuture_1steppast_dvae_encoder",
+    "info": "noisy_181_single_allfuture_1steppast_dvae_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
     "seed": 1,
@@ -56,7 +56,7 @@
             "dense_reward": true,
             "multi_eps": false,
             "eps_mask_ind": [0, 1, 2, 3, 4],
-            "eps_p": [0.0, 1.0, 0.0]
+            "eps_p": [0.1, 0.8, 0.1]
         }
     },
     "training_params": {
