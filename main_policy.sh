@@ -21,7 +21,7 @@ JOB_DIR="/users/ac1xch/CDL-DVAE_${SLURM_JOB_ID}"
 mkdir -p $JOB_DIR
 
 # Copy the current state of the code to the job-specific directory
-cp -r /users/ac1xch/CDL-DVAE/cdl/* $JOB_DIR
+cp -r /users/ac1xch/CDL-DVAE/* $JOB_DIR
 
 # Log GPU usage in the background
 mkdir -p gpu
