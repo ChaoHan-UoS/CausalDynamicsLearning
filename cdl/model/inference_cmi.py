@@ -707,7 +707,8 @@ class InferenceCMI(Inference):
         bool_mask = int_mask < 1
         return bool_mask  # (bs, num_hidden_objects, feature_dim_dset + 1)
 
-    def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature, loss_type="recon"):
+    def prediction_loss_from_multi_dist(self, pred_next_dist, next_feature,
+                                        keep_var_dim=False, loss_type="recon"):
         """
         calculate total prediction loss for full, masked and/or causal prediction distributions
         :param pred_next_dist:
@@ -722,51 +723,56 @@ class InferenceCMI(Inference):
                 a tensor of shape (bs, n_pred_step, feature_dim)
             else:
                 a list of tensors, [(bs, n_pred_step, feature_i_dim)] * feature_dim
+        :param keep_var_dim: whether to keep the dimension of state variables which is dim=-1
         :param loss_type: "recon" or "kl"
         :return pred_loss: scalar tensor
                 pred_loss_detail: {"loss_name": loss_value}
         """
-        pred_losses = [self.prediction_loss_from_dist(pred_next_dist_i, next_feature, loss_type=loss_type)
-                       for pred_next_dist_i in pred_next_dist]  # [(bs, n_pred_step)] * len(forward_mode)
+        # [(bs, n_pred_step, (feature_dim)] * len(forward_mode)
+        pred_losses = [self.prediction_loss_from_dist(pred_next_dist_i,
+                                                      next_feature,
+                                                      keep_variable_dim=keep_var_dim,
+                                                      loss_type=loss_type)
+                       for pred_next_dist_i in pred_next_dist]
 
         if len(pred_losses) == 2:
             pred_losses.append(None)
         assert len(pred_losses) == 3
         full_pred_loss, masked_pred_loss, causal_pred_loss = pred_losses
 
-        full_pred_loss = full_pred_loss.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
-        masked_pred_loss = masked_pred_loss.sum(dim=-1).mean()
+        full_pred_loss = full_pred_loss.sum(1).mean(0)  # sum over n_pred_step then average over bs
+        masked_pred_loss = masked_pred_loss.sum(1).mean(0)
         # full_pred_loss = full_pred_loss[:, 0].mean()  # slice the first pred step then average over bs
         # masked_pred_loss = masked_pred_loss[:, 0].mean()
 
         pred_loss = full_pred_loss + masked_pred_loss
 
-        if loss_type == "recon":
-            pred_loss_detail = {"full_nll_loss": full_pred_loss,
-                                "masked_nll_loss": masked_pred_loss}
-        elif loss_type == "kl":
-            pred_loss_detail = {"full_kl_loss": full_pred_loss,
-                                "masked_kl_loss": masked_pred_loss}
-        elif loss_type == "recon_h":
-            pred_loss_detail = {"full_nll_h_loss": full_pred_loss,
-                                "masked_nll_h_loss": masked_pred_loss}
+        pred_loss_detail = {}
+        if loss_type in ["recon", "kl", "recon_h"]:
+            num_objects = len(self.obs_objects_ind) if loss_type == "recon" else len(self.hidden_objects_ind)
+            if keep_var_dim:
+                for i in range(num_objects):
+                    pred_loss_detail[f"full_{loss_type}_{i}_loss"] = full_pred_loss[i]
+                    pred_loss_detail[f"masked_{loss_type}_{i}_loss"] = masked_pred_loss[i]
+            else:
+                pred_loss_detail = {
+                    f"full_{loss_type}_loss": full_pred_loss,
+                    f"masked_{loss_type}_loss": masked_pred_loss
+                }
         else:
             raise NotImplementedError
 
         if causal_pred_loss is not None:
-            causal_pred_loss = causal_pred_loss.sum(dim=-1).mean()
+            causal_pred_loss = causal_pred_loss.sum(1).mean(0)
             # causal_pred_loss = causal_pred_loss[:, 0].mean()
             pred_loss += causal_pred_loss
-            if loss_type == "recon":
-                pred_loss_detail["causal_nll_loss"] = causal_pred_loss
-            elif loss_type == "kl":
-                pred_loss_detail["causal_kl_loss"] = causal_pred_loss
-            elif loss_type == "recon_h":
-                pred_loss_detail["causal_nll_h_loss"] = causal_pred_loss
+            if keep_var_dim:
+                for i in range(num_objects):
+                    pred_loss_detail[f"causal_{loss_type}_{i}_loss"] = causal_pred_loss[i]
             else:
-                raise NotImplementedError
+                pred_loss_detail[f"causal_{loss_type}_loss"] = causal_pred_loss
 
-        return pred_loss, pred_loss_detail
+        return pred_loss.sum(-1), pred_loss_detail
 
     def rew_loss_from_feature(self, feature, rew):
         """
@@ -987,8 +993,13 @@ class InferenceCMI(Inference):
         next_x, next_z_infer_probs = self.get_next_state(x, z_probs)
         if not self.update_num % (eval_freq * inference_gradient_steps):
             next_x_dists = next_x_dists[:2]
-        recon, recon_detail = self.prediction_loss_from_multi_dist(next_x_dists, next_x, loss_type="recon")
-        recon_h, recon_h_detail = self.prediction_loss_from_multi_dist(next_z_prior_dists, next_z_infer_probs,
+        recon, recon_detail = self.prediction_loss_from_multi_dist(next_x_dists,
+                                                                   next_x,
+                                                                   keep_var_dim=True,
+                                                                   loss_type="recon")
+        recon_h, recon_h_detail = self.prediction_loss_from_multi_dist(next_z_prior_dists,
+                                                                       next_z_infer_probs,
+                                                                       keep_var_dim=True,
                                                                        loss_type="kl")
         # recon, recon_detail = self.prediction_loss_from_multi_dist(next_dists, next_feature, loss_type="recon")
         rew_loss, rew_loss_detail = self.rew_loss_from_feature(st, r)

@@ -174,11 +174,12 @@ def train(params):
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
-        is_pre_train = (training_params.init_steps - 1 <= step
+        is_pre_train = (training_params.init_steps <= step
                         < inference_params.pre_train_steps + training_params.init_steps)
+        train_step = 0 if is_init_stage else (step + 1 - training_params.init_steps)
         if (step + 1) % 100 == 0:
-            print("{}/{}, init_stage: {}, pre_train_stage: {},".format(step + 1, total_steps,
-                                                                       is_init_stage, is_pre_train))
+            print("{}/{}, {}, Init Stage: {}, Pre-Train Stage: {}".format(
+                step + 1, total_steps, train_step, is_init_stage, is_pre_train))
         loss_details = {"inference": [],
                         "inference_eval": [],
                         "policy": []}
@@ -285,6 +286,10 @@ def train(params):
         if is_init_stage:
             continue
 
+        # saving initial training states
+        if train_step - 1 == 0 and inference_gradient_steps > 0:
+            inference.save(os.path.join(model_dir, "inference_0"))
+
         if inference_gradient_steps > 0:
             inference.train()
             encoder.train()
@@ -302,7 +307,7 @@ def train(params):
             inference.eval()
             encoder.eval()
             decoder.eval()
-            if ((step + 1 - training_params.init_steps) % cmi_params.eval_freq == 0 and
+            if (train_step % cmi_params.eval_freq == 0 and
                     inference.update_num >= inference_params.pre_train_steps):
                 if use_cmi:
                     # if do not update inference, there is no need to update inference eval mask
@@ -320,9 +325,8 @@ def train(params):
 
             # inference.scheduler.step()
             # anneal the temperature
-            if (step + 1 - training_params.init_steps) % anneal_steps == 0:
-                anneal_curr_step = step + 1 - training_params.init_steps
-                encoder.gumbel_temp = np.maximum(gumbel_temp_0 * np.exp(-anneal_rate * anneal_curr_step),
+            if train_step % anneal_steps == 0:
+                encoder.gumbel_temp = np.maximum(gumbel_temp_0 * np.exp(-anneal_rate * train_step),
                                                  gumbel_temp_ss)
             # if (step + 1 - training_params.init_steps) % 10000 == 0:
             #     print("buffer_train_len", len(buffer_train))
@@ -357,20 +361,20 @@ def train(params):
                 for loss_name, loss_values in module_loss_detail.items():
                     if isinstance(loss_values[0], dict):
                         writer.add_scalars("{}/{}".format(module_name, loss_name),
-                                           loss_values[0], step)
+                                           loss_values[0], train_step)
                     else:
                         writer.add_scalar("{}/{}".format(module_name, loss_name),
-                                          torch.mean(torch.stack(loss_values).float(), 0), step)
+                                          torch.mean(torch.stack(loss_values).float(), 0), train_step)
 
-            if (step + 1) % training_params.plot_freq == 0 and inference_gradient_steps > 0:
-                plot_adjacency_intervention_mask(params, inference, writer, step)
+            if train_step % training_params.plot_freq == 0 and inference_gradient_steps > 0:
+                plot_adjacency_intervention_mask(params, inference, writer, train_step)
 
         # saving training results
-        if (step + 1) % training_params.saving_freq == 0:
+        if train_step % training_params.saving_freq == 0:
             if inference_gradient_steps > 0:
-                inference.save(os.path.join(model_dir, "inference_{}".format(step + 1)))
+                inference.save(os.path.join(model_dir, "inference_{}".format(train_step)))
             if policy_gradient_steps > 0:
-                policy.save(os.path.join(model_dir, "policy_{}".format(step + 1)))
+                policy.save(os.path.join(model_dir, "policy_{}".format(train_step)))
 
 
 if __name__ == "__main__":
