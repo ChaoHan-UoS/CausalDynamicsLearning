@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=64G
 #SBATCH --time=3-23:59:00
-#SBATCH --output=out/output%j.txt
+#SBATCH --output=/users/ac1xch/CDL-DVAE_%j/out/output_%j.txt
 
 module load Anaconda3/2022.05
 module load cuDNN/8.8.0.121-CUDA-12.0.0
@@ -24,12 +24,13 @@ mkdir -p $JOB_DIR
 cp -r /users/ac1xch/CDL-DVAE/* $JOB_DIR
 
 # Log GPU usage in the background
-mkdir -p gpu
+mkdir -p "${JOB_DIR}/gpu"
 GPU_LOG_FILE="gpu_usage_${SLURM_JOB_ID}.log"
-nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1000 > gpu/$GPU_LOG_FILE & NVIDIA_SMI_PID=$!
+nvidia-smi --query-gpu=timestamp,name,utilization.gpu,utilization.memory,memory.total,memory.used,power.draw --format=csv,nounits -l 1000 > ${JOB_DIR}/gpu/$GPU_LOG_FILE & NVIDIA_SMI_PID=$!
 
 # run the code from the job-specific directory
 cd "${JOB_DIR}/cdl"
+pwd
 echo "Task"
 python main_policy.py
 echo "Done"
