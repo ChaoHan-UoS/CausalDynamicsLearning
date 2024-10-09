@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=n181
-#SBATCH --partition=gpu-h100
+#SBATCH --partition=gpu
 #SBATCH --qos=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=8G
