@@ -124,7 +124,7 @@
     "decoder_params": {
         "decoder_type": "feedforward",
         "feedforward_dec_params": {
-            "hidden_layer_size": 256,
+            "hidden_layer_size": 128,
             "dropout": 0,
             "categorical_rew": true
         }
