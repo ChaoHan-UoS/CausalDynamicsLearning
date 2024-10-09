@@ -3,7 +3,7 @@
 #SBATCH --partition=gpu
 #SBATCH --qos=gpu
 #SBATCH --gres=gpu:1
-#SBATCH --mem=8G
+#SBATCH --mem=32G
 #SBATCH --time=3-23:59:00
 #SBATCH --output=/users/ac1xch/CDL-DVAE_%j/out/output_%j.txt
 
