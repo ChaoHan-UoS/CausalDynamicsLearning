@@ -1019,10 +1019,13 @@ class Chemical(gym.Env):
         self.np_random = None
         self.seed(params.seed)
 
+        self.reward_type = chemical_env_params.reward_type
         self.match_type = chemical_env_params.match_type
         self.dense_reward = chemical_env_params.dense_reward
         if self.match_type == "all":
             self.match_type = list(range(self.num_objects))
+        elif self.match_type == "hidden":
+            self.match_type = chemical_env_params.hidden_objects_ind
 
         self.partial_obs_keys = params.obs_keys
         # self.partial_act_dims = [i for i in range(chemical_env_params.num_objects)]
@@ -1333,26 +1336,26 @@ class Chemical(gym.Env):
             obj.color = to_numpy(self.object_to_color[idx].argmax())
 
     def step(self, action: int):
-        matches = 0.
-        l1 = 0.
+        reward_type = self.reward_type
+        matches, distances = 0.0, 0.0
         for i, (c1, c2) in enumerate(zip(self.object_to_color, self.object_to_color_target)):
-            if i not in self.match_type:
-                continue
-            if (c1 == c2).all():
-                matches += 1
-            # c1 = torch.argmax(c1).item()
-            # c2 = torch.argmax(c2).item()
-            # l1 += abs(c1 - c2)
+            if reward_type == "match":
+                if i not in self.match_type:
+                    continue
+                matches += float((c1 == c2).all())
+            elif reward_type == "distance":
+                if i not in self.match_type:
+                    continue
+                distances += abs(torch.argmax(c1).item() - torch.argmax(c2).item())
+            else:
+                raise NotImplementedError("Unsupported reward type")
 
         num_needed_match = len(self.match_type)
         if self.dense_reward:
-            reward = matches / num_needed_match
-            # reward = l1
+            reward = matches / num_needed_match if reward_type == "match" else distances
         else:
-            reward = float(matches == num_needed_match)
-            # reward = float(l1 == 0)
-        info = {"success": matches == num_needed_match}
-        # info = {"success": l1 == 0}
+            reward = float(matches == num_needed_match) if reward_type == "match" else float(distances == 0)
+        info = {"success": matches == num_needed_match if reward_type == "match" else distances == 0}
 
         partial_action = self.partial_act_dims[action]
         obj_id = partial_action

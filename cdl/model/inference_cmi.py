@@ -786,22 +786,20 @@ class InferenceCMI(Inference):
         rew_feature = self.decoder(feature)
 
         if self.decoder.categorical_rew:
-            # (bs, n_pred_step)
-            rew_unnorm = (rew * self.num_objects).squeeze(dim=-1).long()
             # (bs, reward_dim, n_pred_step)
             rew_feature = rew_feature.permute(0, 2, 1)
+            rew = rew * self.num_objects if self.decoder.reward_type == "match" else rew
+            rew = rew.squeeze(dim=-1).long()  # (bs, n_pred_step)
             if not self.training:
                 # accuracy as the prediction loss
-                _, rew_feature_ids = rew_feature.max(dim=1)  # (bs, n_pred_step)
-                rec_loss = (rew_feature_ids == rew_unnorm).sum() / np.prod(rew_feature_ids.shape)
+                rew_feature_idx = rew_feature.argmax(dim=1)  # (bs, n_pred_step)
+                rec_loss = (rew_feature_idx == rew).float().mean()
             else:
-                rec_loss = self.loss_ce(rew_feature, rew_unnorm)  # (bs, n_pred_step)
+                rec_loss = self.loss_ce(rew_feature, rew)  # (bs, n_pred_step)
         else:
-            # L1/L2 reward prediction loss
-            rec_loss = self.loss_l1(rew_feature, rew)  # (bs, n_pred_step, 1)
-            rec_loss = rec_loss.squeeze(-1)
+            rec_loss = self.loss_l1(rew_feature, rew).squeeze(-1)  # (bs, n_pred_step)
 
-        rew_loss = rec_loss.sum(dim=-1).mean()  # sum over n_pred_step then average over bs
+        rew_loss = rec_loss.sum(dim=-1).mean()   # sum over n_pred_step then average over bs
         rew_loss_detail = {"rew_loss": rew_loss}
 
         return rew_loss, rew_loss_detail
