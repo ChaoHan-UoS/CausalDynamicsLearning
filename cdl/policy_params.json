@@ -89,7 +89,7 @@
         "use_all_past": false,
         "use_all_future": true,
         "num_future": 0,
-        "num_past": 1,
+        "num_past": 0,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
         "num_rnn_g": 1,
