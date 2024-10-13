@@ -915,6 +915,7 @@ class Encoder(nn.Module):
         self.zxu_dim = zxu_dim = self.z_dim + self.o_inner_dim.sum() + self.a_inner_dim
         # self.zxu_dim = zxu_dim = 2 * self.num_colors + self.a_inner_dim
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
+        self.x3u2_dim = x3u2_dim = 3 * self.o_inner_dim.sum() + 2 * self.a_inner_dim
         self.xxui_dim = xxui_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + self.seq_len
         self.xzuxz_dim = xzuxz_dim = self.o_inner_dim.sum() + self.z_dim + self.a_inner_dim + self.num_colors
         self.hh_dim = hh_dim = 2 * self.num_colors
@@ -932,7 +933,7 @@ class Encoder(nn.Module):
         # independent RNN for each hidden object
         self.rnn_g = nn.ModuleList()
         for i in range(self.num_hidden_objects):
-            self.rnn_g.append(nn.LSTM(xu_dim if self.use_all_future or self.use_all_past else xxu_dim,
+            self.rnn_g.append(nn.LSTM(xu_dim if self.use_all_future or self.use_all_past else x3u2_dim,
                                       dim_rnn_g, num_rnn_g, batch_first=True))
 
         # independent RNN for each noise
@@ -1401,8 +1402,8 @@ class Encoder(nn.Module):
         :return z / z_probs: (bs, seq_len, num_hiddens * num_colors)
                 x: (bs, seq_len, num_observables * num_colors)
                 u: (bs, seq_len, num_observables)
-                st: [(bs, seq_len - 2, num_colors)] * (2 * num_objects)
-                r: (bs, seq_len - 2, 1)
+                st: [(bs, seq_len - num_hiddes, num_colors)] * (2 * num_objects)
+                r: (bs, seq_len - num_hiddes, 1)
                 eps: (bs, seq_len, num_objects * eps_dim)
                 eps_xzu_probs: (bs, seq_len, num_objects * eps_dim)
                 xuz_llh: (bs * (seq_len - 2), )
@@ -1414,20 +1415,17 @@ class Encoder(nn.Module):
         u[:, 1:] = a[:, :-1]
 
         bs, seq_len = a.shape[:2]
-        z = torch.zeros(bs, seq_len - self.num_hidden_objects + 1, self.z_dim).to(self.device)
-        z_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1, self.z_dim).to(self.device)
-        eps = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
-                          self.num_objects * self.eps_dim).to(self.device)
-        eps_xzu_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
-                                    self.num_objects * self.eps_dim).to(self.device)
+        # t = 1 to (T - num_hiddes)
+        z = torch.zeros(bs, seq_len, self.z_dim).to(self.device)
+        z_probs = torch.zeros(bs, seq_len, self.z_dim).to(self.device)
+        eps = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
+        eps_xzu_probs = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         # eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
         #                               self.num_objects * self.eps_dim).to(self.device)
 
         # x_{t:T}, u_{t:T} -> g_t;
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
         # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
-        x_tm1 = torch.zeros_like(x)
-        x_tm1[:, 1:] = x[:, :-1]
         if self.use_all_future or self.use_all_past:
             # x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
             # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
@@ -1440,7 +1438,6 @@ class Encoder(nn.Module):
             for j in range(self.num_hidden_objects):
                 g, _ = self.rnn_g[j](torch.flip(xu, [1]) if self.use_all_future else xu)
                 g_h.append(torch.flip(g, [1]) if self.use_all_future else g)
-        # for i in range(1, 3):
         for i in range(1, seq_len - self.num_hidden_objects + 1):
             if self.num_future > 0:
                 # x_ids = F.one_hot(torch.tensor(i), seq_len).unsqueeze(0).unsqueeze(0)
@@ -1451,9 +1448,14 @@ class Encoder(nn.Module):
                 # xxui = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
                 #                  x[:, i: (i + self.num_hidden_objects)],
                 #                  u[:, i: (i + self.num_hidden_objects)], x_ids), -1)
-                xxu = torch.cat((x_tm1[:, i: (i + self.num_future)],
-                                 x[:, i: (i + self.num_future)],
-                                 u[:, i: (i + self.num_future)]), -1)
+                # xxu = torch.cat((x[:, (i - 1):i],
+                #                  x[:, i:(i + 1)],
+                #                  u[:, i: (i + 1)]), -1)
+                x3u2 = torch.cat((x[:, (i - 1):i],
+                                 x[:, i:(i + 1)],
+                                 x[:, (i + 1):(i + 2)],
+                                 u[:, i:(i + 1)],
+                                 u[:, (i + 1):(i + 2)]), -1)
             for j in range(self.num_hidden_objects):
                 zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
                 m = self.mlp_m[j](zxu)
@@ -1466,7 +1468,7 @@ class Encoder(nn.Module):
                         else g_h[j][:, i - 1]
                     n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
                 elif self.num_future > 0:
-                    g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
+                    g, _ = self.rnn_g[j](torch.flip(x3u2, [1]))
                     g = torch.flip(g, [1])
                     mg = torch.cat((m, g[:, 0]), -1) if (self.num_past > 0 and i > 1) else g[:, 0]
                     n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
@@ -1475,13 +1477,20 @@ class Encoder(nn.Module):
                 z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
-        # state + target / reward: t=1 to T-1
-        # (bs, seq_len - 1, 2 * num_objects * num_colors)
-        st = torch.cat((ot[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
-                        z[:, 1:], ot[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), dim=-1)
-        # [(bs, seq_len - 1, num_colors)] * (2 * num_objects)
+        # state + target / reward: t=1 to (T - num_hiddes)
+        # (bs, seq_len - num_hiddes, 2 * num_objects * num_colors)
+        st = torch.cat(
+            (
+                ot[:, :-self.num_hidden_objects, :(self.hidden_objects_ind[0] * self.num_colors)],
+                z[:, 1:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
+                ot[:, :-self.num_hidden_objects, (self.hidden_objects_ind[0] * self.num_colors):]
+            ),
+            dim=-1
+        )
+
+        # [(bs, seq_len - num_hiddes, num_colors)] * (2 * num_objects)
         st = torch.split(st, self.num_colors, dim=-1)
-        r = r[:, :-1]
+        r = r[:, :-self.num_hidden_objects]
 
         if not self.eps_encoder:
             return z, z_probs, x, u, st, r

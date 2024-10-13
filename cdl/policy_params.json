@@ -1,7 +1,7 @@
 {
-    "info": "noisy_262_single_1stepfuture_1steppast_dvae_encoder",
-    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
+    "info": "noisy_free_allfuture_1steppast_dvae_encoder",
+    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -35,10 +35,10 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [2],
+            "hidden_objects_ind": [1, 2],
             "hidden_targets_ind": [],
-            "num_objects": 5,
-            "num_colors": 5,
+            "num_objects": 4,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -49,15 +49,15 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 7,
+            "max_steps": 8,
             "num_target_interventions": 3,
-            "g": "chain5",
+            "g": "chain4",
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": false,
-            "eps_mask_ind": [0, 1, 2, 3, 4],
-            "eps_p": [0.2, 0.6, 0.2]
+            "eps_mask_ind": [0],
+            "eps_p": [0.0, 1.0, 0.0]
         }
     },
     "training_params": {
@@ -67,14 +67,14 @@
         "load_model_based": "",
         "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 420000,
+        "total_steps": 120000,
         "init_steps": 20000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
         "saving_freq": 20000,
-        "plot_freq": 2000,
+        "plot_freq": 1000,
         "supervised_hidden_decoder": true,
         "replay_buffer_params": {
             "capacity": 10000000,
@@ -82,13 +82,13 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 7
+            "stack_num": 8
         }
     },
     "encoder_params": {
         "use_all_past": false,
-        "use_all_future": false,
-        "num_future": 1,
+        "use_all_future": true,
+        "num_future": 0,
         "num_past": 1,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
@@ -99,7 +99,7 @@
         "gumbel_softmax_params": {
             "gumbel_temp_0": 2,
             "gumbel_temp_ss": 1,
-            "anneal_steps": 10000,
+            "anneal_steps": 20000,
             "anneal_rate": 0.00001
         },
         "eps_encoder": false,
