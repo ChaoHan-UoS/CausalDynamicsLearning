@@ -38,7 +38,7 @@
             "hidden_objects_ind": [1, 2],
             "hidden_targets_ind": [],
             "num_objects": 4,
-            "num_colors": 3,
+            "num_colors": 4,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
