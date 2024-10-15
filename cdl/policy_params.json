@@ -1,7 +1,7 @@
 {
-    "info": "noisy_free_allfuture_1steppast_dvae_encoder",
-    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3"],
+    "info": "noisy_free_allpast_dvae_encoder",
+    "obs_keys_f": ["obj0", "obj1", "obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -35,10 +35,10 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1, 2],
+            "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 4,
-            "num_colors": 4,
+            "num_objects": 3,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -49,15 +49,15 @@
             "shape_size": 16,
             "movement": "Dynamic",
             "use_cuda": false,
-            "max_steps": 8,
+            "max_steps": 7,
             "num_target_interventions": 3,
-            "g": "chain4",
+            "g": "chain3",
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": false,
-            "eps_mask_ind": [0],
-            "eps_p": [0.0, 1.0, 0.0]
+            "eps_mask_ind": [2],
+            "eps_p": [0.5, 0.0, 0.5]
         }
     },
     "training_params": {
@@ -65,9 +65,8 @@
         "rl_algo": "random",
         "load_inference": "",
         "load_model_based": "",
-        "load_policy": "",
         "load_replay_buffer": "",
-        "total_steps": 120000,
+        "total_steps": 220000,
         "init_steps": 20000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
@@ -82,18 +81,18 @@
             "saving_freq": 0,
             "prioritized_buffer": false,
             "prioritized_alpha": 0.2,
-            "stack_num": 8
+            "stack_num": 7
         }
     },
     "encoder_params": {
-        "use_all_past": false,
-        "use_all_future": true,
+        "use_all_past": true,
+        "use_all_future": false,
         "num_future": 0,
         "num_past": 0,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
         "num_rnn_g": 1,
-        "dims_mlp_m": [128],
+        "dims_mlp_m": [128, 128],
         "dims_cf_n": [128, 128],
         "dropout_p": 0,
         "gumbel_softmax_params": {
@@ -145,6 +144,7 @@
         "log_std_min": -20,
         "log_std_max": 0,
         "grad_clip_norm": 20000,
+        "w_rew_loss": 50,
         "cmi_params": {
             "feature_fc_dims": [128, 128],
             "generative_fc_dims": [128, 128],

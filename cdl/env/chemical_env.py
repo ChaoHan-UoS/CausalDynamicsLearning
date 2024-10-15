@@ -1262,10 +1262,10 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            if i in self.chemical_env_params.hidden_objects_ind:
-                random_color = i
-            else:
-                random_color = self.np_random.integers(0, self.num_colors)
+            # if i in self.chemical_env_params.hidden_objects_ind:
+            #     random_color = i
+            # else:
+            random_color = self.np_random.integers(0, self.num_colors)
             self.object_to_color[i][random_color] = 1
             # self.object_to_color[i][1] = 1
 
@@ -1297,12 +1297,12 @@ class Chemical(gym.Env):
 
         for i in range(len(self.object_to_color)):
             self.object_to_color_target[i][to_numpy(self.object_to_color[i].argmax())] = 1
-        ########################################################
+        # #######################################################
         # print('OBJECT_TO_COLOR_TARGET INITIAL')
         # print(self.object_to_color_target)
         # print('OBJECT_TO_COLOR INITIAL')
         # print(self.object_to_color)
-        ########################################################
+        # #######################################################
 
         self.generate_target(num_steps)
         self.object_to_color_target_np = [to_numpy(ele.argmax()) for ele in self.object_to_color_target]
@@ -1383,7 +1383,7 @@ class Chemical(gym.Env):
         terminated = False
         truncated = self.cur_step >= self.max_steps
 
-        ########################################################
+        # #######################################################
         # print("ACTION ENV")
         # print(action)
         # print(partial_action)
@@ -1393,6 +1393,6 @@ class Chemical(gym.Env):
         # print("REWARD ENV")
         # print(reward, truncated, info)
         # print("\n")
-        ########################################################
+        # #######################################################
 
         return state, reward, terminated, truncated, info

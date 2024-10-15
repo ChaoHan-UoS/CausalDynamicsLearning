@@ -36,6 +36,7 @@ class Inference(nn.Module):
 
         self.abstraction_quested = False
 
+        self.w_rew_loss = inference_params.w_rew_loss
         self.loss_l1 = nn.L1Loss(reduction='none')
         self.loss_mse = nn.MSELoss(reduction='none')
         self.loss_ce = nn.CrossEntropyLoss(reduction='none')
