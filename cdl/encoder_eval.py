@@ -104,10 +104,10 @@ class HiddenDecoder(nn.Module):
         # (bs, seq_len, num_hiddens * num_colors)
         hidden_enc = self.encoder(obs_batch)[0]
         # (bs, num_colors, seq_len - 1, num_hiddens)
-        hidden_dec = self.forward(hidden_enc[:, 1:])
+        hidden_dec = self.forward(hidden_enc[:, 2:])
 
         # hidden from t=1 to T-1
-        hidden_label = [hidden_batch[key][:, :-1].squeeze(dim=-1).long()
+        hidden_label = [hidden_batch[key][:, 1:-1].squeeze(dim=-1).long()
                         for key in self.params.hidden_keys]
         # (bs, seq_len - 1, num_hiddens)
         hidden_label = torch.stack(hidden_label, dim=-1)
@@ -135,8 +135,8 @@ def pred_state_acc(next_obs, next_hidden, pred_obs_dists, pred_hidden_dists, kee
     # (bs, seq_len - 2, num_observables/num_hiddens)
     next_obs = torch.stack(next_obs, -1).argmax(-2)
     next_hidden = torch.stack(next_hidden, -1).argmax(-2)
-    pred_obs = torch.stack([dist_i.probs[:, :-1].argmax(-1) for dist_i in pred_obs_dists], -1)
-    pred_hidden = torch.stack(pred_hidden_dists, -1)[:, :-1].argmax(-2)
+    pred_obs = torch.stack([dist_i.probs[:, :].argmax(-1) for dist_i in pred_obs_dists], -1)
+    pred_hidden = torch.stack(pred_hidden_dists, -1)[:, :].argmax(-2)
 
     mean_dim = (0, 1) if keep_variable_dim else None
     pred_obs_acc = (pred_obs == next_obs).float().mean(dim=mean_dim)
@@ -391,7 +391,7 @@ def train(params):
         print(f'reward prediction accuracy: {rew_loss}')
 
 if __name__ == "__main__":
-    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_free_allfuture_dvae_encoder_2024_09_15_11_37_36"
+    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o1_allpast_history_encoder_2024_10_15_22_04_13"
     params_path = os.path.join(rslts_dir, "params.json")
     params = TrainingParams(training_params_fname=params_path, train=False)
     params.rslts_dir = rslts_dir
