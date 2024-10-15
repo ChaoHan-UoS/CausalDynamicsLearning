@@ -1,5 +1,5 @@
 {
-    "info": "noisy_free_allpast_dvae_encoder",
+    "info": "noisy_o2_allpast_history_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
@@ -66,7 +66,7 @@
         "load_inference": "",
         "load_model_based": "",
         "load_replay_buffer": "",
-        "total_steps": 220000,
+        "total_steps": 70000,
         "init_steps": 20000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
