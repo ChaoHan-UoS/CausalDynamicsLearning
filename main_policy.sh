@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=no1_apaf
-#SBATCH --partition=gpu
+#SBATCH --partition=gpu-h100
 #SBATCH --qos=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
