@@ -1,5 +1,5 @@
 {
-    "info": "noisy_h1_allpast_history_encoder",
+    "info": "noisy_all_allfuture_allpast_birnn_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
@@ -55,9 +55,9 @@
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
-            "multi_eps": false,
-            "eps_mask_ind": [1],
-            "eps_p": [0.5, 0.0, 0.5]
+            "multi_eps": true,
+            "eps_mask_ind": [0, 1, 2],
+            "eps_p": [0.1, 0.8, 0.1]
         }
     },
     "training_params": {
@@ -66,13 +66,13 @@
         "load_inference": "",
         "load_model_based": "",
         "load_replay_buffer": "",
-        "total_steps": 70000,
+        "total_steps": 120000,
         "init_steps": 20000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
         "inference_gradient_steps": 1,
         "policy_gradient_steps": 0,
-        "saving_freq": 10000,
+        "saving_freq": 20000,
         "plot_freq": 1000,
         "supervised_hidden_decoder": true,
         "replay_buffer_params": {
@@ -86,7 +86,7 @@
     },
     "encoder_params": {
         "use_all_past": true,
-        "use_all_future": false,
+        "use_all_future": true,
         "num_future": 0,
         "num_past": 0,
         "encoder_freq": 0,
