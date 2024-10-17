@@ -544,11 +544,11 @@ class InferenceCMI(Inference):
             # # [(bs, num_observables)] * 1
             # action = torch.unbind(u, dim=1)
         else:
-            # t = 2 to (T - num_hiddens - 1)
+            # t = 1 to (T - num_hiddens - 1)
             feature_parts = [
-                x[:, 1:(-self.num_hidden_objects - 1), :(self.hidden_objects_ind[0] * self.num_colors)],
-                z[:, 2:-self.num_hidden_objects],
-                x[:, 1:(-self.num_hidden_objects - 1), (self.hidden_objects_ind[0] * self.num_colors):]
+                x[:, :(-self.num_hidden_objects - 1), :(self.hidden_objects_ind[0] * self.num_colors)],
+                z[:, 1:-self.num_hidden_objects],
+                x[:, :(-self.num_hidden_objects - 1), (self.hidden_objects_ind[0] * self.num_colors):]
             ]
             # feature_parts = [
             #     x[:, (-self.num_hidden_objects - 2):(-self.num_hidden_objects - 1), :(self.hidden_objects_ind[0] * self.num_colors)],
@@ -565,7 +565,7 @@ class InferenceCMI(Inference):
             feature = [torch.split(feature_i, list(self.feature_in_inner_dim), dim=-1)
                        for feature_i in feature]
             # [(bs, num_observables)] * (seq_len - num_hiddens - 1)
-            action = torch.unbind(u[:, 2:-self.num_hidden_objects], dim=1)
+            action = torch.unbind(u[:, 1:-self.num_hidden_objects], dim=1)
             # action = torch.unbind(u[:, (-self.num_hidden_objects - 1):-self.num_hidden_objects], dim=1)
 
         # # For masked MLP encoder
@@ -580,7 +580,7 @@ class InferenceCMI(Inference):
         # action = u[1:]
 
         # [(bs, feature_out_dim, feature_in_dim + 1)] * (seq_len - num_hiddens - 1)
-        mask = torch.unbind(mask[:, 2:-self.num_hidden_objects], dim=1) \
+        mask = torch.unbind(mask[:, 1:-self.num_hidden_objects], dim=1) \
             if mask is not None else [None for _ in feature]
 
         # full_feature: prediction using all state variables
@@ -950,13 +950,13 @@ class InferenceCMI(Inference):
         # For MLP encoder
         # true next observables at t=2 to (T - num_hiddens)
         # [(bs, seq_len - num_hiddens - 1, num_colors)] * num_observables
-        next_x = torch.split(x[:, 2:-self.num_hidden_objects], self.num_colors, dim=-1)
+        next_x = torch.split(x[:, 1:-self.num_hidden_objects], self.num_colors, dim=-1)
         # next_x = torch.split(x[:, (-self.num_hidden_objects - 1):-self.num_hidden_objects], self.num_colors, dim=-1)
         # inferenced next hidden at t=2 to (T - num_hiddens)
         # [(bs, seq_len - num_hiddens - 1, num_colors)] * num_hiddens
         # next_z_infer_probs = torch.split(z[:, 2:-1], self.num_colors, dim=-1)
         next_z_infer_probs = torch.split(
-            z_probs[:, 3:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
+            z_probs[:, 2:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
             # z_probs[:, -self.num_hidden_objects:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
             self.num_colors, dim=-1)
 
@@ -1272,7 +1272,7 @@ class InferenceCMI(Inference):
                     if hidden is not None:
                         # hidden objects at t=2 to (T - num_hiddens)
                         # (bs, seq_len - num_hiddens - 1, num_hiddens)
-                        next_hidden = [hidden[key][:, 2:-self.num_hidden_objects].squeeze(dim=-1).long()
+                        next_hidden = [hidden[key][:, 1:-self.num_hidden_objects].squeeze(dim=-1).long()
                                        for key in self.params.hidden_keys]
                         # next_hidden = [hidden[key][:, (-self.num_hidden_objects - 1):-self.num_hidden_objects].squeeze(dim=-1).long()
                         #                for key in self.params.hidden_keys]

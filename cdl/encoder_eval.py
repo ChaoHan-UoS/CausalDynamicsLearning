@@ -104,10 +104,10 @@ class HiddenDecoder(nn.Module):
         # (bs, seq_len, num_hiddens * num_colors)
         hidden_enc = self.encoder(obs_batch)[0]
         # (bs, num_colors, seq_len - 1, num_hiddens)
-        hidden_dec = self.forward(hidden_enc[:, 2:])
+        hidden_dec = self.forward(hidden_enc[:, 1:])
 
         # hidden from t=1 to T-1
-        hidden_label = [hidden_batch[key][:, 1:-1].squeeze(dim=-1).long()
+        hidden_label = [hidden_batch[key][:, :-1].squeeze(dim=-1).long()
                         for key in self.params.hidden_keys]
         # (bs, seq_len - 1, num_hiddens)
         hidden_label = torch.stack(hidden_label, dim=-1)
@@ -391,7 +391,7 @@ def train(params):
         print(f'reward prediction accuracy: {rew_loss}')
 
 if __name__ == "__main__":
-    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_allpast_birnn_encoder_2024_10_17_04_27_18"
+    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_all_allfuture_allpast_birnn_encoder_2024_10_16_15_31_57"
     params_path = os.path.join(rslts_dir, "params.json")
     params = TrainingParams(training_params_fname=params_path, train=False)
     params.rslts_dir = rslts_dir
