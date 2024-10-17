@@ -391,7 +391,7 @@ def train(params):
         print(f'reward prediction accuracy: {rew_loss}')
 
 if __name__ == "__main__":
-    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o1_allpast_history_encoder_2024_10_15_22_04_13"
+    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_allpast_birnn_encoder_2024_10_17_04_27_18"
     params_path = os.path.join(rslts_dir, "params.json")
     params = TrainingParams(training_params_fname=params_path, train=False)
     params.rslts_dir = rslts_dir
