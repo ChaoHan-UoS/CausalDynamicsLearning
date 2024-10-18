@@ -56,7 +56,7 @@
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": true,
-            "eps_mask_ind": [0, 1, 2],
+            "eps_mask_ind": [2],
             "eps_p": [0.1, 0.8, 0.1]
         }
     },
