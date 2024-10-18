@@ -913,6 +913,7 @@ class Encoder(nn.Module):
         self.dim_rnn_g = dim_rnn_g = self.encoder_params.dim_rnn_g
         self.num_rnn_g = num_rnn_g = self.encoder_params.num_rnn_g
         self.zxu_dim = zxu_dim = self.z_dim + self.o_inner_dim.sum() + self.a_inner_dim
+        self.x_dim = x_dim = self.o_inner_dim.sum()
         # self.zxu_dim = zxu_dim = 2 * self.num_colors + self.a_inner_dim
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
         self.x3u2_dim = x3u2_dim = 3 * self.o_inner_dim.sum() + 2 * self.a_inner_dim
@@ -957,16 +958,17 @@ class Encoder(nn.Module):
             dic_layers = OrderedDict()
             for n in range(len(dims_mlp_m)):
                 if n == 0:
-                    dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
                     # dic_layers['linear' + str(n)] = nn.Linear(xu_dim, dims_mlp_m[n])
-                    # dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
+                    dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(x_dim, dims_mlp_m[n])
                 else:
                     dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
                 dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_mlp_m[n])
                 dic_layers['activation' + str(n)] = nn.ReLU()
                 dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
             dic_layers['linear_last'] = nn.Linear(dims_mlp_m[-1], dim_rnn_g)
-            # dic_layers['linear_last'] = nn.Linear(zxu_dim, dim_rnn_g)
+            # dic_layers['linear_last'] = nn.Linear(x_dim, dim_rnn_g)
             dic_layers['layer_norm_last'] = nn.LayerNorm(dim_rnn_g)
             dic_layers['activation_last'] = nn.ReLU()
             dic_layers['dropout_last'] = nn.Dropout(p=dropout_p)
@@ -1483,9 +1485,10 @@ class Encoder(nn.Module):
                 # xxui = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
                 #                  x[:, i: (i + self.num_hidden_objects)],
                 #                  u[:, i: (i + self.num_hidden_objects)], x_ids), -1)
-                xxu = torch.cat((x[:, (i - 1):i],
-                                 x[:, i:(i + 1)],
-                                 u[:, i:(i + 1)]), -1)
+                # xxu = torch.cat((x[:, (i - 1):i],
+                #                  x[:, i:(i + 1)],
+                #                  u[:, i:(i + 1)]), -1)
+                xxu = torch.cat((x[:, (i - 1)], x[:, i], u[:, i]), -1)
                 # x3u2 = torch.cat((x[:, (i - 1):i],
                 #                  x[:, i:(i + 1)],
                 #                  x[:, (i + 1):(i + 2)],
@@ -1498,7 +1501,12 @@ class Encoder(nn.Module):
 
                 # Past, future, and fixed future encoders
                 if self.use_all_past and not self.use_all_future:
-                    n = self.cf_n[0][j](g_h_f[j][:, i - 1])
+                    if self.num_future == 0:
+                        n = self.cf_n[0][j](g_h_f[j][:, i - 1])
+                    else:
+                        n = self.cf_n[0][j](
+                            torch.cat((g_h_f[j][:, i - 1], self.mlp_m[j](xxu)), -1)
+                        )
 
                 if not self.use_all_past and self.use_all_future:
                     n = self.cf_n[0][j](g_h_b[j][:, i - 1])
