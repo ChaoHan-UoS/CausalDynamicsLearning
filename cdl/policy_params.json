@@ -1,5 +1,5 @@
 {
-    "info": "noisy_o2_1stepfuture_allpast_birnn_encoder",
+    "info": "noisy_o1_1stepfuture_allpast_birnn_encoder",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
@@ -56,7 +56,7 @@
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": true,
-            "eps_mask_ind": [2],
+            "eps_mask_ind": [0],
             "eps_p": [0.1, 0.8, 0.1]
         }
     },
