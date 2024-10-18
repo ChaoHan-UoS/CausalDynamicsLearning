@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=na_1fap_fih
+#SBATCH --job-name=fhno2_1fap
 #SBATCH --partition=gpu-h100
 #SBATCH --qos=gpu
 #SBATCH --gres=gpu:1
