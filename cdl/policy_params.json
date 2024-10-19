@@ -1,7 +1,7 @@
 {
     "info": "noisy_free_allfuture_allpast_birnn_encoder",
-    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
+    "obs_keys_f": ["obj0", "obj1", "obj2"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -37,8 +37,8 @@
         "chemical_env_params": {
             "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 5,
-            "num_colors": 5,
+            "num_objects": 3,
+            "num_colors": 3,
             "continuous_pos": true,
             "width_std": 1,
             "height_std": 1,
@@ -51,7 +51,7 @@
             "use_cuda": false,
             "max_steps": 7,
             "num_target_interventions": 3,
-            "g": "chain5",
+            "g": "chain3",
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
