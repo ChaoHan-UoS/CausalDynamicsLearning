@@ -1538,20 +1538,20 @@ class Encoder(nn.Module):
                 z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
-        # # state + target / reward: t=1 to (T - num_hiddes)
-        # # (bs, seq_len - num_hiddes, 2 * num_objects * num_colors)
-        # st = torch.cat(
-        #     (
-        #         ot[:, :-self.num_hidden_objects, :(self.hidden_objects_ind[0] * self.num_colors)],
-        #         z[:, 1:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
-        #         ot[:, :-self.num_hidden_objects, (self.hidden_objects_ind[0] * self.num_colors):]
-        #     ),
-        #     dim=-1
-        # )
-        #
-        # # [(bs, seq_len - num_hiddes, num_colors)] * (2 * num_objects)
-        # st = torch.split(st, self.num_colors, dim=-1)
-        # r = r[:, :-self.num_hidden_objects]
+        # state + target / reward: t=1 to (T - num_hiddes)
+        # (bs, seq_len - num_hiddes, 2 * num_objects * num_colors)
+        st = torch.cat(
+            (
+                ot[:, :-self.num_hidden_objects, :(self.hidden_objects_ind[0] * self.num_colors)],
+                z[:, 1:((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
+                ot[:, :-self.num_hidden_objects, (self.hidden_objects_ind[0] * self.num_colors):]
+            ),
+            dim=-1
+        )
+
+        # [(bs, seq_len - num_hiddes, num_colors)] * (2 * num_objects)
+        st = torch.split(st, self.num_colors, dim=-1)
+        r = r[:, :-self.num_hidden_objects]
 
         # # For history-based encoder
         # # state + target / reward: t=2 to (T - num_hiddes)
@@ -1570,20 +1570,20 @@ class Encoder(nn.Module):
         # r = r[:, 1:-self.num_hidden_objects]
 
 
-        # state + target / reward: t=2 to (T - num_hiddes)
-        # (bs, seq_len - num_hiddes - 1, 2 * num_objects * num_colors)
-        st = torch.cat(
-            (
-                ot[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects, :(self.hidden_objects_ind[0] * self.num_colors)],
-                z[:, (-self.num_hidden_objects - 1):((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
-                ot[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects, (self.hidden_objects_ind[0] * self.num_colors):]
-            ),
-            dim=-1
-        )
-
-        # [(bs, seq_len - num_hiddes - 1, num_colors)] * (2 * num_objects)
-        st = torch.split(st, self.num_colors, dim=-1)
-        r = r[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects]
+        # # state + target / reward: t=2 to (T - num_hiddes)
+        # # (bs, seq_len - num_hiddes - 1, 2 * num_objects * num_colors)
+        # st = torch.cat(
+        #     (
+        #         ot[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects, :(self.hidden_objects_ind[0] * self.num_colors)],
+        #         z[:, (-self.num_hidden_objects - 1):((-self.num_hidden_objects + 1) if self.num_hidden_objects > 1 else None)],
+        #         ot[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects, (self.hidden_objects_ind[0] * self.num_colors):]
+        #     ),
+        #     dim=-1
+        # )
+        #
+        # # [(bs, seq_len - num_hiddes - 1, num_colors)] * (2 * num_objects)
+        # st = torch.split(st, self.num_colors, dim=-1)
+        # r = r[:, (-self.num_hidden_objects - 2):-self.num_hidden_objects]
 
         if not self.eps_encoder:
             return z, z_probs, x, u, st, r
