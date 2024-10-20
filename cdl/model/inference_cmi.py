@@ -42,6 +42,7 @@ class InferenceCMI(Inference):
         self.num_hidden_objects = len(self.hidden_objects_ind)
         # self.num_hidden_objects = 5
         self.obs_objects_ind = [i for i in range(self.num_objects) if i not in self.hidden_objects_ind]
+        self.eps_p = chemical_env_params.eps_p
 
         # model params
         continuous_state = self.continuous_state
@@ -832,6 +833,32 @@ class InferenceCMI(Inference):
         mi_eps = 1 * mi_eps.sum(-1).mean()
         return mi_eps
 
+    def eps_kl_loss(self, eps_probs):
+        """
+        :param eps_probs: (bs, seq_len, num_objects * eps_dim)
+        :return eps_kl_loss: scalar tensor
+        """
+        # (bs, seq_len, num_objects, eps_dim)
+        eps_probs = eps_probs.view(*eps_probs.shape[:2], self.num_objects, self.eps_dim)
+        # t=1 to (T - num_hiddens - 1)
+        # (bs, seq_len - num_hiddens - 1, num_objects, eps_dim)
+        eps_probs = eps_probs[:, 1:-self.num_hidden_objects]
+        if not self.update_num % 2000:
+            print("eps_probs", eps_probs[:2])
+
+        eps_prior = torch.tensor(self.eps_p).view(1, 1, 1, self.eps_dim)
+        # (bs, seq_len - num_hiddens - 1, num_objects, eps_dim)
+        eps_prior = eps_prior.expand(*eps_probs.shape).to(self.device)
+
+        # summed over eps_dim for KL; (bs, seq_len - num_hiddens - 1, num_objects)
+        eps_kl_loss = torch.sum(
+            eps_probs * (torch.log(eps_probs + 1e-20) - torch.log(eps_prior + 1e-20)), dim=-1)
+
+        # sum over num_objects and n_pred_step, then average over bs
+        eps_kl_loss = eps_kl_loss.sum((1, 2)).mean()
+        return eps_kl_loss
+
+
     # def backprop(self, loss, loss_detail):
     #     encoder_freq = self.encoder_params.encoder_freq
     #     transition_freq = self.inference_params.transition_freq
@@ -986,10 +1013,11 @@ class InferenceCMI(Inference):
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
 
-        eps, mi_eps, eps_details = None, None, {}
+        eps, eps_kl_loss, eps_details = None, None, {}
         if self.encoder_params.eps_encoder:
             z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs = self.encoder(obs)
-            if eps_probs is not None:
+            eps_kl_loss = self.eps_kl_loss(eps_probs)
+            if self.encoder_params.count_transitions:
                 mi_eps = self.mi_eps_loss(eps_xzu_probs, eps_probs)
                 eps_details["mi_eps"] = mi_eps
         else:
@@ -1029,10 +1057,14 @@ class InferenceCMI(Inference):
         # hidden_loss_detail = {"hidden_loss": hidden_loss}
 
         # loss = recon + kl + rew_loss
-        nelbo = recon + recon_h + mi_eps if mi_eps is not None else recon + recon_h
-        # loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **hidden_loss_detail}
-        loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details} \
-            if mi_eps is not None else {**recon_detail, **recon_h_detail, **rew_loss_detail}
+        if eps_kl_loss is not None:
+            nelbo = recon + recon_h + self.beta_kl * torch.abs(eps_kl_loss - torch.tensor(self.C))
+            eps_details["eps_kl_loss"] = eps_kl_loss
+            eps_details["eps_kl_loss_diff"] = torch.abs(eps_kl_loss - torch.tensor(self.C))
+            loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details}
+        else:
+            nelbo = recon + recon_h
+            loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail}
 
         # if not eval and torch.isfinite(nelbo):
         #     self.backprop(nelbo, loss_detail)

@@ -958,9 +958,9 @@ class Encoder(nn.Module):
             dic_layers = OrderedDict()
             for n in range(len(dims_mlp_m)):
                 if n == 0:
-                    # dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
+                    dic_layers['linear' + str(n)] = nn.Linear(zxu_dim, dims_mlp_m[n])
                     # dic_layers['linear' + str(n)] = nn.Linear(xu_dim, dims_mlp_m[n])
-                    dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(xxu_dim, dims_mlp_m[n])
                     # dic_layers['linear' + str(n)] = nn.Linear(x_dim, dims_mlp_m[n])
                 else:
                     dic_layers['linear' + str(n)] = nn.Linear(dims_mlp_m[n - 1], dims_mlp_m[n])
@@ -1022,16 +1022,16 @@ class Encoder(nn.Module):
                 dic_layers = OrderedDict()
                 for n in range(len(dims_cf_n)):
                     if n == 0:
-                        # dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g if i == 0 else 2 * dim_rnn_g,
-                        #                                           dims_cf_n[n])
+                        dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g if i == 0 else 2 * dim_rnn_g,
+                                                                  dims_cf_n[n])
                         # dic_layers['linear' + str(n)] = nn.Linear(
                         #     2 * dim_rnn_g + self.seq_len - self.num_hidden_objects, dims_cf_n[n]
                         # )
-                        if (self.use_all_past and self.use_all_future) or self.num_future > 0:
-                            dim_cf_in = 2 * dim_rnn_g
-                        else:
-                            dim_cf_in = dim_rnn_g
-                        dic_layers['linear' + str(n)] = nn.Linear(dim_cf_in, dims_cf_n[n])
+                        # if (self.use_all_past and self.use_all_future) or self.num_future > 0:
+                        #     dim_cf_in = 2 * dim_rnn_g
+                        # else:
+                        #     dim_cf_in = dim_rnn_g
+                        # dic_layers['linear' + str(n)] = nn.Linear(dim_cf_in, dims_cf_n[n])
                     else:
                         dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
                     dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
@@ -1431,6 +1431,7 @@ class Encoder(nn.Module):
         z = torch.zeros(bs, seq_len, self.z_dim).to(self.device)
         z_probs = torch.zeros(bs, seq_len, self.z_dim).to(self.device)
         eps = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
+        eps_probs = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         eps_xzu_probs = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         # eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
         #                               self.num_objects * self.eps_dim).to(self.device)
@@ -1438,39 +1439,30 @@ class Encoder(nn.Module):
         # x_{t:T}, u_{t:T} -> g_t;
         # z_{t-1}, x_{t-1:t:2}, u_{t-1} -> m_t;
         # m_t, g_t -> n_t; z_t ~ Categorical(n_t)
+        if self.use_all_future or self.use_all_past:
+            # x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
+            # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
+            # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
+            # xxu = torch.cat((x_tm1, x, u), -1)
+            # xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
+            # xu = torch.cat((x[:, :, :2 * self.num_colors], a[:, :, :2]), -1)
+            xu = torch.cat((x, a), -1)
+            g_h = []
+            for j in range(self.num_hidden_objects):
+                g, _ = self.rnn_g[j](torch.flip(xu, [1]) if self.use_all_future else xu)
+                g_h.append(torch.flip(g, [1]) if self.use_all_future else g)
 
-        # if self.use_all_future or self.use_all_past:
-        #     # x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
-        #     # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
-        #     # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
-        #     # xxu = torch.cat((x_tm1, x, u), -1)
-        #     # xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
-        #     # xu = torch.cat((x[:, :, :2 * self.num_colors], a[:, :, :2]), -1)
-        #     xu = torch.cat((x, a), -1)
-        #     g_h = []
+        # xu = torch.cat((x, a), -1)
+        # if self.use_all_past:
+        #     g_h_f = []
         #     for j in range(self.num_hidden_objects):
-        #         g, _ = self.rnn_g[j](torch.flip(xu, [1]) if self.use_all_future else xu)
-        #         g_h.append(torch.flip(g, [1]) if self.use_all_future else g)
-
-        # x_ids = torch.eye(seq_len).unsqueeze(0).repeat(bs, 1, 1).to(self.device)
-        # (bs, seq_len, 2 * num_observables * num_colors + num_observables + seq_len)
-        # xxui = torch.cat((x_tm1, x, u, x_ids), -1)
-        # xxu = torch.cat((x_tm1, x, u), -1)
-        # xu = torch.cat((x_tm1, u), -1) if self.use_all_future else torch.cat((x, a), -1)
-        # xu = torch.cat((x[:, :, :2 * self.num_colors], a[:, :, :2]), -1)
-        xu = torch.cat((x, a), -1)
-        if self.use_all_past:
-            g_h_f = []
-            for j in range(self.num_hidden_objects):
-                g, _ = self.rnn_g[j](xu)
-                g_h_f.append(g)
-
-        if self.use_all_future:
-            g_h_b = []
-            for j in range(self.num_hidden_objects):
-                g, _ = self.rnn_g[j](torch.flip(xu, [1]))
-                g_h_b.append(torch.flip(g, [1]))
-
+        #         g, _ = self.rnn_g[j](xu)
+        #         g_h_f.append(g)
+        # if self.use_all_future:
+        #     g_h_b = []
+        #     for j in range(self.num_hidden_objects):
+        #         g, _ = self.rnn_g[j](torch.flip(xu, [1]))
+        #         g_h_b.append(torch.flip(g, [1]))
         # idx_one_hot = F.one_hot(
         #     torch.arange(0, seq_len - self.num_hidden_objects).repeat(bs, 1)
         # ).float().to(self.device)
@@ -1485,56 +1477,56 @@ class Encoder(nn.Module):
                 # xxui = torch.cat((x_tm1[:, i: (i + self.num_hidden_objects)],
                 #                  x[:, i: (i + self.num_hidden_objects)],
                 #                  u[:, i: (i + self.num_hidden_objects)], x_ids), -1)
-                # xxu = torch.cat((x[:, (i - 1):i],
-                #                  x[:, i:(i + 1)],
-                #                  u[:, i:(i + 1)]), -1)
-                xxu = torch.cat((x[:, (i - 1)], x[:, i], u[:, i]), -1)
+                xxu = torch.cat((x[:, (i - 1):i],
+                                 x[:, i:(i + 1)],
+                                 u[:, i:(i + 1)]), -1)
+                # xxu = torch.cat((x[:, (i - 1)], x[:, i], u[:, i]), -1)
                 # x3u2 = torch.cat((x[:, (i - 1):i],
                 #                  x[:, i:(i + 1)],
                 #                  x[:, (i + 1):(i + 2)],
                 #                  u[:, i:(i + 1)],
                 #                  u[:, (i + 1):(i + 2)]), -1)
             for j in range(self.num_hidden_objects):
-                # if (self.num_past > 0 and i > 1):
-                #     zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
-                #     m = self.mlp_m[j](zxu)
+                if (self.num_past > 0 and i > 1):
+                    zxu = torch.cat((z[:, i - 1], x[:, i - 2], u[:, i - 1]), -1)
+                    m = self.mlp_m[j](zxu)
 
-                # Past, future, and fixed future encoders
-                if self.use_all_past and not self.use_all_future:
-                    if self.num_future == 0:
-                        n = self.cf_n[0][j](g_h_f[j][:, i - 1])
-                    else:
-                        n = self.cf_n[0][j](
-                            torch.cat((g_h_f[j][:, i - 1], self.mlp_m[j](xxu)), -1)
-                        )
+                # # Past, future, and fixed future encoders
+                # if self.use_all_past and not self.use_all_future:
+                #     if self.num_future == 0:
+                #         n = self.cf_n[0][j](g_h_f[j][:, i - 1])
+                #     else:
+                #         n = self.cf_n[0][j](
+                #             torch.cat((g_h_f[j][:, i - 1], self.mlp_m[j](xxu)), -1)
+                #         )
+                # if not self.use_all_past and self.use_all_future:
+                #     n = self.cf_n[0][j](g_h_b[j][:, i - 1])
+                # if self.use_all_past and self.use_all_future:
+                #     # n = self.cf_n[0][j](g_h[j][:, i - 1])
+                #     # n = self.cf_n[0][j](
+                #     #     torch.cat((g_h_f[j][:, i - 1], g_h_b[j][:, i - 1], idx_one_hot[:, i - 1]), -1)
+                #     # )
+                #     n = self.cf_n[0][j](
+                #         torch.cat((g_h_f[j][:, i - 1], g_h_b[j][:, i - 1]), -1)
+                #     )
 
-                if not self.use_all_past and self.use_all_future:
-                    n = self.cf_n[0][j](g_h_b[j][:, i - 1])
-
-                if self.use_all_past and self.use_all_future:
-                    # n = self.cf_n[0][j](g_h[j][:, i - 1])
-                    # n = self.cf_n[0][j](
-                    #     torch.cat((g_h_f[j][:, i - 1], g_h_b[j][:, i - 1], idx_one_hot[:, i - 1]), -1)
-                    # )
-                    n = self.cf_n[0][j](
-                        torch.cat((g_h_f[j][:, i - 1], g_h_b[j][:, i - 1]), -1)
-                    )
-
-                # elif self.use_all_future:
-                #     mg = torch.cat((m, g_h[j][:, i - 1]), -1) if (self.num_past > 0 and i > 1) \
-                #         else g_h[j][:, i - 1]
-                #     # mg = (m + g_h[j][:, i - 1]) / 2 if (self.num_past > 0 and i > 1) \
-                #     #     else g_h[j][:, i - 1]
-                #     n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
-                # elif self.num_future > 0:
-                #     g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
-                #     # g, _ = self.rnn_g[j](torch.flip(x3u2, [1]))
-                #     g = torch.flip(g, [1])
-                #     mg = torch.cat((m, g[:, 0]), -1) if (self.num_past > 0 and i > 1) else g[:, 0]
-                #     # mg = (m + g[:, 0]) / 2 if (self.num_past > 0 and i > 1) else g[:, 0]
-                #     n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
-                # else:
-                #     raise ValueError("Invalid encoder type")
+                if self.use_all_past:
+                    n = self.cf_n[0][j](g_h[j][:, i - 1])
+                elif self.use_all_future:
+                    mg = torch.cat((m, g_h[j][:, i - 1]), -1) if (self.num_past > 0 and i > 1) \
+                        else g_h[j][:, i - 1]
+                    # mg = (m + g_h[j][:, i - 1]) / 2 if (self.num_past > 0 and i > 1) \
+                    #     else g_h[j][:, i - 1]
+                    n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
+                elif self.num_future > 0:
+                    g, _ = self.rnn_g[j](torch.flip(xxu, [1]))
+                    # g, _ = self.rnn_g[j](torch.flip(x3u2, [1]))
+                    g = torch.flip(g, [1])
+                    mg = torch.cat((m, g[:, 0]), -1) if (self.num_past > 0 and i > 1) else g[:, 0]
+                    # mg = (m + g[:, 0]) / 2 if (self.num_past > 0 and i > 1) else g[:, 0]
+                    n = self.cf_n[1][j](mg) if (self.num_past > 0 and i > 1) else self.cf_n[0][j](mg)
+                else:
+                    raise ValueError("Invalid encoder type")
                 z[:, i, j * self.num_colors: (j + 1) * self.num_colors] = self.reparam(n)
                 z_probs[:, i, j * self.num_colors: (j + 1) * self.num_colors] = F.softmax(n / 1, dim=-1)
 
@@ -1590,33 +1582,29 @@ class Encoder(nn.Module):
         else:
             # z_detach = z.detach()
             z_detach = z
-            xzu_tm1 = torch.cat((x_tm1, z_detach, u), -1)
-            xz = torch.cat((x[:, :-1, :self.hidden_objects_ind[0] * self.num_colors],
-                            z_detach[:, 1:], x[:, :-1, self.hidden_objects_ind[0] * self.num_colors:]), -1)
+
+            # t = 1 to t-1
+            xz = torch.cat(
+                (
+                    x[:, :-1, :(self.hidden_objects_ind[0] * self.num_colors)],
+                    z_detach[:, 1:],
+                    x[:, :-1, (self.hidden_objects_ind[0] * self.num_colors):]
+                ), -1)
             for i in range(1, seq_len - 1):
                 for j in range(self.num_objects):
-                    xzuxz = torch.cat((xzu_tm1[:, i: (i + 1)],
-                                       xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]), -1)
+                    xzuxz = torch.cat(
+                        (
+                            xz[:, (i - 1): i],
+                            u[:, i: (i + 1)],
+                            xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]
+                        ), -1)
                     g, _ = self.rnn_e[j](torch.flip(xzuxz, [1]))
                     g = torch.flip(g, [1])
                     n = self.mlp_e[j](g[:, 0])
-                    # t=1 to T-2
+                    # t = 1 to T-2
                     eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
                     # eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = n
-
-                    xzu = torch.cat((xzu_tm1[:, i: (i + 1)],
-                                     torch.zeros_like(xz[:, i: (i + 1),
-                                                      j * self.num_colors: (j + 1) * self.num_colors])), -1)
-                    g, _ = self.rnn_e[j](torch.flip(xzu, [1]))
-                    g = torch.flip(g, [1])
-                    n = self.mlp_e[j](g[:, 0])
-                    eps_xzu_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
-
-                    # all_zeros = torch.zeros_like(xzu)
-                    # g, _ = self.rnn_e[j](torch.flip(all_zeros, [1]))
-                    # g = torch.flip(g, [1])
-                    # n = self.mlp_e[j](g[:, 0])
-                    # eps_zeros_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+                    eps_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
 
             # Batch-wise update the counting-based probability of each tuple (obs, action, hidden)
             # and compute the likelihood of each tuple in the batch
@@ -1644,11 +1632,9 @@ class Encoder(nn.Module):
                 eps_probs = (eps_xzu_probs_uni * xuz_probs).sum(0)
                 # (bs * (seq_len - 2), num_objects, eps_dim)
                 eps_probs = eps_probs.unsqueeze(0).expand(len(oah_batch), -1, -1).detach()
-            else:
-                eps_probs = None
 
-            if not self.update_num % 1000:
-                print("xuz_llh", xuz_llh, len(xuz_llh))
+            # if not self.update_num % 1000:
+            #     print("xuz_llh", xuz_llh, len(xuz_llh))
 
             return z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs
 

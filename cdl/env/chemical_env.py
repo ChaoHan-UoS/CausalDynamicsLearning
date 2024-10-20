@@ -1262,10 +1262,10 @@ class Chemical(gym.Env):
 
         # Sample color for all nodes randomly
         for i in range(self.num_objects):
-            # if i in self.chemical_env_params.hidden_objects_ind:
-            #     random_color = i
-            # else:
-            random_color = self.np_random.integers(0, self.num_colors)
+            if i in self.chemical_env_params.hidden_objects_ind:
+                random_color = i
+            else:
+                random_color = self.np_random.integers(0, self.num_colors)
             self.object_to_color[i][random_color] = 1
             # self.object_to_color[i][1] = 1
 
