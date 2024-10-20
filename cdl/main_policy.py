@@ -171,10 +171,14 @@ def train(params):
     gumbel_temp_ss = gumbel_softmax_params.gumbel_temp_ss
     anneal_steps = gumbel_softmax_params.anneal_steps
     anneal_rate = gumbel_softmax_params.anneal_rate
-    C_0 = inference_params.C_0
-    C_ss = inference_params.C_ss
-    C_anneal_steps = inference_params.C_anneal_steps
-    C_anneal_rate = inference_params.C_anneal_rate
+    # C_0 = inference_params.C_0
+    # C_ss = inference_params.C_ss
+    # C_anneal_steps = inference_params.C_anneal_steps
+    # C_anneal_rate = inference_params.C_anneal_rate
+    beta_0 = inference_params.beta_0
+    beta_ss = inference_params.beta_ss
+    beta_anneal_steps = inference_params.beta_anneal_steps
+    beta_anneal_rate = inference_params.beta_anneal_rate
 
     for step in range(start_step, total_steps):
         is_init_stage = step < training_params.init_steps
@@ -304,7 +308,8 @@ def train(params):
                 obs_batch, hidden_batch = batch_process(batch_data, params)
                 loss_detail = inference.update(obs_batch, hidden_batch)
                 loss_detail["encoder_gumbel_temp"] = torch.tensor(encoder.gumbel_temp)
-                loss_detail["C"] = torch.tensor(inference.C)
+                # loss_detail["C"] = torch.tensor(inference.C)
+                loss_detail["beta"] = torch.tensor(inference.beta)
                 # loss_detail["lr"] = torch.tensor(inference.optimizer_transition.param_groups[0]['lr'])
                 # loss_detail["lr"] = torch.tensor(inference.optimizer.param_groups[0]['lr'])
                 loss_details["inference"].append(loss_detail)
@@ -333,9 +338,13 @@ def train(params):
             if train_step % anneal_steps == 0:
                 encoder.gumbel_temp = np.maximum(gumbel_temp_0 * np.exp(-anneal_rate * train_step),
                                                  gumbel_temp_ss)
-            # anneal eps KL target C
-            if train_step % C_anneal_steps == 0:
-                inference.C = C_ss * (1 - np.exp(-C_anneal_rate * train_step)) + C_0
+            # # anneal eps KL target C
+            # if train_step % C_anneal_steps == 0:
+            #     inference.C = C_ss * (1 - np.exp(-C_anneal_rate * train_step)) + C_0
+
+            # anneal beta of esp KL loss
+            if train_step % beta_anneal_steps == 0:
+                inference.beta = np.maximum(beta_0 * np.exp(-beta_anneal_rate * train_step), beta_ss)
 
             # if (step + 1 - training_params.init_steps) % 10000 == 0:
             #     print("buffer_train_len", len(buffer_train))

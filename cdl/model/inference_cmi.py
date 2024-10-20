@@ -1058,9 +1058,11 @@ class InferenceCMI(Inference):
 
         # loss = recon + kl + rew_loss
         if eps_kl_loss is not None:
-            nelbo = recon + recon_h + self.beta_kl * torch.abs(eps_kl_loss - torch.tensor(self.C))
+            # nelbo = recon + recon_h + self.beta * torch.abs(eps_kl_loss - torch.tensor(self.C))
+            # eps_details["eps_kl_loss"] = eps_kl_loss
+            # eps_details["eps_kl_loss_diff"] = torch.abs(eps_kl_loss - torch.tensor(self.C))
+            nelbo = recon + recon_h + self.beta * eps_kl_loss
             eps_details["eps_kl_loss"] = eps_kl_loss
-            eps_details["eps_kl_loss_diff"] = torch.abs(eps_kl_loss - torch.tensor(self.C))
             loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details}
         else:
             nelbo = recon + recon_h
