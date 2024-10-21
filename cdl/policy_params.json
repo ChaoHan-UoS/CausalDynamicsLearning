@@ -57,7 +57,7 @@
             "reward_type": "match",
             "multi_eps": true,
             "eps_mask_ind": [0, 1, 2, 3, 4],
-            "eps_p": [0.5, 0.0, 0.5]
+            "eps_p": [0.1, 0.8, 0.1]
         }
     },
     "training_params": {
