@@ -882,14 +882,14 @@ class Encoder(nn.Module):
             if self.eps_encoder else feature_inner_dim
         self.feature_out_inner_dim = feature_inner_dim
 
-        # hindsight-based encoder implemented by masked MLP
+        # eps encoder implemented by masked MLP
         self.feedforward_enc_params = params.encoder_params.feedforward_enc_params
-        self.hind_feature_dim = 2 * self.num_obs_objects
+        self.hind_feature_dim = self.num_objects + 1
         self.continuous_state = params.continuous_state
-        self.hind_feature_inner_dim, self.hidden_feature_inner_dim = None, None
+        self.hind_feature_inner_dim, self.eps_feature_inner_dim = None, None
         if not self.continuous_state:
             self.hind_feature_inner_dim = np.array([self.num_colors for _ in range(self.hind_feature_dim)])
-            self.hidden_feature_inner_dim = np.array([self.num_colors for _ in range(self.num_hidden_objects)])
+            self.eps_feature_inner_dim = np.array([self.eps_dim for _ in range(self.num_objects)])
         self.dropout = nn.Dropout(p=self.feedforward_enc_params.dropout_p)
 
         self.use_all_past = self.encoder_params.use_all_past
@@ -918,11 +918,12 @@ class Encoder(nn.Module):
         self.xxu_dim = xxu_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim
         self.x3u2_dim = x3u2_dim = 3 * self.o_inner_dim.sum() + 2 * self.a_inner_dim
         self.xxui_dim = xxui_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + self.seq_len
-        self.xzuxz_dim = xzuxz_dim = self.o_inner_dim.sum() + self.z_dim + self.a_inner_dim + self.num_colors
+        self.x2z2u_dim = x2z2u_dim = self.o_inner_dim.sum() + self.z_dim + self.a_inner_dim + self.num_colors
         self.hh_dim = hh_dim = 2 * self.num_colors
         self.xz_dim = xz_dim = 2 * (self.o_inner_dim.sum() + self.num_colors)
         self.dims_mlp_m = dims_mlp_m = self.encoder_params.dims_mlp_m
         self.dims_cf_n = dims_cf_n = self.encoder_params.dims_cf_n
+        self.dims_cf_e = dims_cf_e = self.encoder_params.dims_cf_e
         self.xxuzz_dim = xxuzz_dim = 2 * self.o_inner_dim.sum() + self.a_inner_dim + 2 * self.z_dim
         dropout_p = self.encoder_params.dropout_p
 
@@ -942,7 +943,7 @@ class Encoder(nn.Module):
         # independent RNN for each noise
         self.rnn_e = nn.ModuleList()
         for i in range(self.num_objects):
-            self.rnn_e.append(nn.LSTM(xzuxz_dim, dim_rnn_g, num_rnn_g, batch_first=True))
+            self.rnn_e.append(nn.LSTM(x2z2u_dim, dim_rnn_g, num_rnn_g, batch_first=True))
 
         # # independent MLP for each hidden object and time step
         # self.rnn_g = nn.ModuleList()
@@ -1045,15 +1046,16 @@ class Encoder(nn.Module):
         self.mlp_e = nn.ModuleList()
         for j in range(self.num_objects):
             dic_layers = OrderedDict()
-            for n in range(len(dims_cf_n)):
+            for n in range(len(dims_cf_e)):
                 if n == 0:
-                    dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_n[n])
+                    # dic_layers['linear' + str(n)] = nn.Linear(dim_rnn_g, dims_cf_e[n])
+                    dic_layers['linear' + str(n)] = nn.Linear(x2z2u_dim, dims_cf_e[n])
                 else:
-                    dic_layers['linear' + str(n)] = nn.Linear(dims_cf_n[n - 1], dims_cf_n[n])
-                dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_n[n])
+                    dic_layers['linear' + str(n)] = nn.Linear(dims_cf_e[n - 1], dims_cf_e[n])
+                dic_layers['layer_norm' + str(n)] = nn.LayerNorm(dims_cf_e[n])
                 dic_layers['activation' + str(n)] = nn.ReLU()
                 dic_layers['dropout' + str(n)] = nn.Dropout(p=dropout_p)
-            dic_layers['linear_last'] = nn.Linear(dims_cf_n[-1], self.eps_dim)
+            dic_layers['linear_last'] = nn.Linear(dims_cf_e[-1], self.eps_dim)
             self.mlp_e.append(nn.Sequential(dic_layers))
 
         params = self.params
@@ -1061,32 +1063,32 @@ class Encoder(nn.Module):
         continuous_state = self.continuous_state
         self.action_dim = action_dim = params.action_dim
         hind_feature_dim = self.hind_feature_dim
-        num_hidden_objects = self.num_hidden_objects
+        num_objects = self.num_objects
 
-        # [(num_hidden_objects, in_dim_i, out_dim_i)] * len(feature_fc_dims)
+        # [(num_objects, in_dim_i, out_dim_i)] * len(feature_fc_dims)
         self.action_feature_weights = nn.ParameterList()
-        # [(num_hidden_objects, 1, out_dim_i)] * len(feature_fc_dims)
+        # [(num_objects, 1, out_dim_i)] * len(feature_fc_dims)
         self.action_feature_biases = nn.ParameterList()
 
-        # [(num_hidden_objects * hind_feature_dim, in_dim_i, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
+        # [(num_objects * hind_feature_dim, in_dim_i, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
         self.state_feature_weights = nn.ParameterList()
-        # [(num_hidden_objects * hind_feature_dim, 1, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
+        # [(num_objects * hind_feature_dim, 1, out_dim_i)] * len(feature_fc_dims[1:]) for discrete state
         self.state_feature_biases = nn.ParameterList()
 
-        # [(num_hidden_objects, in_dim_i, out_dim_i)] * len(generative_fc_dims)
+        # [(num_objects, in_dim_i, out_dim_i)] * len(generative_fc_dims)
         self.generative_weights = nn.ParameterList()
-        # [(num_hidden_objects, 1, out_dim_i)] * len(generative_fc_dims)
+        # [(num_objects, 1, out_dim_i)] * len(generative_fc_dims)
         self.generative_biases = nn.ParameterList()
 
         # only needed for discrete state space
-        # [(num_hidden_objects, hind_feature_inner_dim_i, out_dim)] * len(hind_feature_inner_dim)
+        # [(num_objects, hind_feature_inner_dim_i, out_dim)] * len(hind_feature_inner_dim)
         self.state_feature_1st_layer_weights = nn.ParameterList()
-        # [(num_hidden_objects, 1, out_dim)] * len(hind_feature_inner_dim)
+        # [(num_objects, 1, out_dim)] * len(hind_feature_inner_dim)
         self.state_feature_1st_layer_biases = nn.ParameterList()
 
-        # [(1, in_dim, hidden_feature_inner_dim_i)] * len(hidden_feature_inner_dim)
+        # [(1, in_dim, eps_feature_inner_dim_i)] * len(eps_feature_inner_dim)
         self.generative_last_layer_weights = nn.ParameterList()
-        # [(1, 1, hidden_feature_inner_dim_i)] * len(hidden_feature_inner_dim)
+        # [(1, 1, eps_feature_inner_dim_i)] * len(eps_feature_inner_dim)
         self.generative_last_layer_biases = nn.ParameterList()
 
         # Instantiate the parameters of each layer in the model of each variable at next time step to predict
@@ -1094,9 +1096,9 @@ class Encoder(nn.Module):
         in_dim = action_dim
         for out_dim in feedforward_enc_params.feature_fc_dims:
             self.action_feature_weights.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+                nn.Parameter(torch.zeros(num_objects, in_dim, out_dim)))
             self.action_feature_biases.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+                nn.Parameter(torch.zeros(num_objects, 1, out_dim)))
             in_dim = out_dim
 
         # state feature extractor
@@ -1109,35 +1111,35 @@ class Encoder(nn.Module):
             for feature_i_dim_dset in self.hind_feature_inner_dim:
                 in_dim = feature_i_dim_dset
                 self.state_feature_1st_layer_weights.append(
-                    nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+                    nn.Parameter(torch.zeros(num_objects, in_dim, out_dim)))
                 self.state_feature_1st_layer_biases.append(
-                    nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+                    nn.Parameter(torch.zeros(num_objects, 1, out_dim)))
             in_dim = out_dim
 
         for out_dim in fc_dims:
             self.state_feature_weights.append(
-                nn.Parameter(torch.zeros(num_hidden_objects * hind_feature_dim, in_dim, out_dim)))
+                nn.Parameter(torch.zeros(num_objects * hind_feature_dim, in_dim, out_dim)))
             self.state_feature_biases.append(
-                nn.Parameter(torch.zeros(num_hidden_objects * hind_feature_dim, 1, out_dim)))
+                nn.Parameter(torch.zeros(num_objects * hind_feature_dim, 1, out_dim)))
             in_dim = out_dim
 
         # predictor
         in_dim = feedforward_enc_params.feature_fc_dims[-1]
         for out_dim in feedforward_enc_params.generative_fc_dims:
             self.generative_weights.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, out_dim)))
+                nn.Parameter(torch.zeros(num_objects, in_dim, out_dim)))
             self.generative_biases.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, 1, out_dim)))
+                nn.Parameter(torch.zeros(num_objects, 1, out_dim)))
             in_dim = out_dim
 
         if continuous_state:
             self.generative_weights.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, in_dim, 2)))
+                nn.Parameter(torch.zeros(num_objects, in_dim, 2)))
             self.generative_biases.append(
-                nn.Parameter(torch.zeros(num_hidden_objects, 1, 2)))
+                nn.Parameter(torch.zeros(num_objects, 1, 2)))
         else:
-            for feature_i_dim_hiddens in self.hidden_feature_inner_dim:
-                final_dim = 2 if feature_i_dim_hiddens == 1 else feature_i_dim_hiddens
+            for eps_feature_i_dim in self.eps_feature_inner_dim:
+                final_dim = 2 if eps_feature_i_dim == 1 else eps_feature_i_dim
                 self.generative_last_layer_weights.append(
                     nn.Parameter(torch.zeros(1, in_dim, final_dim)))
                 self.generative_last_layer_biases.append(
@@ -1177,10 +1179,10 @@ class Encoder(nn.Module):
         :param feature:
             if state space is continuous: (bs, feature_dim)
             else: [(bs, num_colors)] * hind_feature_dim
-        :return: (num_hidden_objects, hind_feature_dim, bs, out_dim),
+        :return: (num_objects, hind_feature_dim, bs, out_dim),
             the first dim is each state variable to predict, the second dim is inputs for the prediction
         """
-        num_hidden_objects = self.num_hidden_objects
+        num_objects = self.num_objects
         hind_feature_dim = self.hind_feature_dim
         if self.continuous_state:
             bs = feature.shape[0]
@@ -1192,7 +1194,7 @@ class Encoder(nn.Module):
             # [(num_hidden_objects, bs, num_colors)] * hind_feature_dim
             reshaped_feature = []
             for f_i in feature:
-                f_i = f_i.repeat(num_hidden_objects, 1, 1)  # (num_hidden_objects, bs, num_colors)
+                f_i = f_i.repeat(num_objects, 1, 1)  # (num_hidden_objects, bs, num_colors)
                 reshaped_feature.append(f_i)
             # [(num_hidden_objects, bs, out_dim)] * hind_feature_dim
             x = forward_network_batch(reshaped_feature,
@@ -1201,23 +1203,23 @@ class Encoder(nn.Module):
                                       dropout=self.dropout)
             x = torch.stack(x, dim=1)  # (num_hidden_objects, hind_feature_dim, bs, out_dim)
             # (num_hidden_objects * hind_feature_dim, bs, out_dim)
-            x = x.view(num_hidden_objects * hind_feature_dim, *x.shape[2:])
+            x = x.view(num_objects * hind_feature_dim, *x.shape[2:])
 
         # (num_hidden_objects * hind_feature_dim, bs, out_dim)
         state_feature = forward_network(x,
                                         self.state_feature_weights,
                                         self.state_feature_biases,
                                         dropout=self.dropout)
-        state_feature = state_feature.view(num_hidden_objects, hind_feature_dim, bs, -1)
-        return state_feature  # (num_hidden_objects, hind_feature_dim, bs, out_dim)
+        state_feature = state_feature.view(num_objects, hind_feature_dim, bs, -1)
+        return state_feature  # (num_objects, hind_feature_dim, bs, out_dim)
 
     def predict_from_sa_feature(self, sa_feature, residual_base=None):
         """
         predict the distribution for the next step value of all state variables
-        :param sa_feature: (num_hidden_objects, bs, out_dim)
+        :param sa_feature: (num_objects, bs, out_dim)
         :param residual_base: (bs, feature_dim), residual used for continuous state variable prediction
         :return: if state space is continuous: a Normal distribution of shape (bs, feature_dim)
-            else: [(bs, num_colors)] * num_hidden_objects
+            else: [(bs, num_colors)] * num_objects
         """
         x = forward_network(sa_feature,
                             self.generative_weights,
@@ -1238,9 +1240,9 @@ class Encoder(nn.Module):
                                       dropout=self.dropout)  # [(1, bs, num_colors)] * num_hidden_objects
 
             dist = []
-            for feature_i_inner_dim_hiddens, dist_i in zip(self.hidden_feature_inner_dim, x):
+            for eps_feature_i_dim, dist_i in zip(self.eps_feature_inner_dim, x):
                 dist_i = dist_i.squeeze(dim=0)  # (bs, num_colors)
-                if feature_i_inner_dim_hiddens == 1:
+                if eps_feature_i_dim == 1:
                     mu, log_std = torch.split(dist_i, 1, dim=-1)  # (bs, 1), (bs, 1)
                     # dist.append(self.normal_helper(mu, base_i, log_std))
                 else:
@@ -1303,9 +1305,9 @@ class Encoder(nn.Module):
         :param features: (bs, feature_dim) if state space is continuous
             else [(bs, num_colors)] * hind_feature_dim
         :param actions: (bs, action_dim)
-        :param mask: (bs, num_hidden_objects, hind_feature_dim + 1)
+        :param mask: (bs, num_objects, hind_feature_dim + 1)
         :param forward_mode
-        :return result_dists: [[(bs, num_colors)] * num_hidden_objects] * len(forward_mode)
+        :return result_dists: [[(bs, num_colors)] * num_objects] * len(forward_mode)
         """
 
         if "masked" in forward_mode:
@@ -1432,6 +1434,7 @@ class Encoder(nn.Module):
         z_probs = torch.zeros(bs, seq_len, self.z_dim).to(self.device)
         eps = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         eps_probs = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
+        eps_xzu = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         eps_xzu_probs = torch.zeros(bs, seq_len, self.num_objects * self.eps_dim).to(self.device)
         # eps_zeros_probs = torch.zeros(bs, seq_len - self.num_hidden_objects + 1,
         #                               self.num_objects * self.eps_dim).to(self.device)
@@ -1580,8 +1583,8 @@ class Encoder(nn.Module):
         if not self.eps_encoder:
             return z, z_probs, x, u, st, r
         else:
-            # z_detach = z.detach()
-            z_detach = z
+            z_detach = z.detach()
+            # z_detach = z
 
             # t = 1 to t-1
             xz = torch.cat(
@@ -1590,21 +1593,47 @@ class Encoder(nn.Module):
                     z_detach[:, 1:],
                     x[:, :-1, (self.hidden_objects_ind[0] * self.num_colors):]
                 ), -1)
+            # t = 1 to T-2
             for i in range(1, seq_len - 1):
                 for j in range(self.num_objects):
-                    xzuxz = torch.cat(
+                    x2z2u = torch.cat(
                         (
-                            xz[:, (i - 1): i],
-                            u[:, i: (i + 1)],
-                            xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]
+                            xz[:, (i - 1)],
+                            u[:, i],
+                            xz[:, i, j * self.num_colors: (j + 1) * self.num_colors],
                         ), -1)
-                    g, _ = self.rnn_e[j](torch.flip(xzuxz, [1]))
-                    g = torch.flip(g, [1])
-                    n = self.mlp_e[j](g[:, 0])
-                    # t = 1 to T-2
+                    n = self.mlp_e[j](x2z2u)
+                    # x2z2u = torch.cat(
+                    #     (
+                    #         xz[:, (i - 1): i],
+                    #         u[:, i: (i + 1)],
+                    #         xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors],
+                    #     ), -1)
+                    # g, _ = self.rnn_e[j](torch.flip(x2z2u, [1]))
+                    # g = torch.flip(g, [1])
+                    # n = self.mlp_e[j](g[:, 0])
                     eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
                     # eps[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = n
                     eps_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
+
+                    xzu = torch.cat(
+                        (
+                            xz[:, (i - 1)],
+                            u[:, i],
+                            torch.zeros_like(xz[:, i, j * self.num_colors: (j + 1) * self.num_colors]),
+                        ), -1)
+                    n = self.mlp_e[j](xzu)
+                    # xzu = torch.cat(
+                    #     (
+                    #         xz[:, (i - 1): i],
+                    #         u[:, i: (i + 1)],
+                    #         torch.zeros_like(xz[:, i: (i + 1), j * self.num_colors: (j + 1) * self.num_colors]),
+                    #     ), -1)
+                    # g, _ = self.rnn_e[j](torch.flip(xzu, [1]))
+                    # g = torch.flip(g, [1])
+                    # n = self.mlp_e[j](g[:, 0])
+                    eps_xzu[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = self.reparam(n)
+                    eps_xzu_probs[:, i, j * self.eps_dim: (j + 1) * self.eps_dim] = F.softmax(n / 1, dim=-1)
 
             # Batch-wise update the counting-based probability of each tuple (obs, action, hidden)
             # and compute the likelihood of each tuple in the batch
@@ -1636,7 +1665,7 @@ class Encoder(nn.Module):
             # if not self.update_num % 1000:
             #     print("xuz_llh", xuz_llh, len(xuz_llh))
 
-            return z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs
+            return z, z_probs, x, u, st, r, eps, eps_xzu, eps_xzu_probs, eps_probs
 
     # def forward(self, obs, forward_with_feature):
     #     """

@@ -786,6 +786,49 @@ class InferenceCMI(Inference):
 
         return pred_loss.sum(-1), pred_loss_detail
 
+    def prediction_loss_from_multi_dist_e(self, pred_next_dist, next_feature,
+                                          keep_var_dim=False, loss_type="recon"):
+        """
+        calculate total prediction loss for full, masked and/or causal prediction distributions
+        :param pred_next_dist:
+            a list of prediction distributions under different prediction mode
+            if state space is continuous:
+                a Normal distribution of shape (bs, n_pred_step, feature_dim)
+            else:
+                a list of distributions, [OneHotCategorical / Normal] * feature_dim,
+                each of shape (bs, n_pred_step, feature_i_dim)
+        :param next_feature:
+            if state space is continuous:
+                a tensor of shape (bs, n_pred_step, feature_dim)
+            else:
+                a list of tensors, [(bs, n_pred_step, feature_i_dim)] * feature_dim
+        :param keep_var_dim: whether to keep the dimension of state variables which is dim=-1
+        :param loss_type: "recon" or "kl"
+        :return pred_loss: scalar tensor
+                pred_loss_detail: {"loss_name": loss_value}
+        """
+        # (bs, n_pred_step, (feature_dim))
+        pred_loss = self.prediction_loss_from_dist(pred_next_dist,
+                                                   next_feature,
+                                                   keep_variable_dim=keep_var_dim,
+                                                   loss_type=loss_type)
+        pred_loss = pred_loss.sum(1).mean(0)  # sum over n_pred_step then average over bs
+
+        pred_loss_detail = {}
+        if loss_type in ["recon", "kl", "recon_h"]:
+            num_objects = len(self.obs_objects_ind) if loss_type == "recon" else len(self.hidden_objects_ind)
+            if keep_var_dim:
+                for i in range(num_objects):
+                    pred_loss_detail[f"full_{loss_type}_{i}_e_loss"] = pred_loss[i]
+            else:
+                pred_loss_detail = {
+                    f"full_{loss_type}_e_loss": pred_loss,
+                }
+        else:
+            raise NotImplementedError
+
+        return pred_loss.sum(-1), pred_loss_detail
+
     def rew_loss_from_feature(self, feature, rew):
         """
         calculate predicted reward losses from full features
@@ -846,7 +889,8 @@ class InferenceCMI(Inference):
         if not self.update_num % 2000:
             print("eps_probs", eps_probs[:2])
 
-        eps_prior = torch.tensor(self.eps_p).view(1, 1, 1, self.eps_dim)
+        eps_p = [1/3, 1/3, 1/3]
+        eps_prior = torch.tensor(eps_p).view(1, 1, 1, self.eps_dim)
         # (bs, seq_len - num_hiddens - 1, num_objects, eps_dim)
         eps_prior = eps_prior.expand(*eps_probs.shape).to(self.device)
 
@@ -1013,9 +1057,9 @@ class InferenceCMI(Inference):
         inference_gradient_steps = self.params.training_params.inference_gradient_steps
         forward_mode = ("full", "masked", "causal")
 
-        eps, eps_kl_loss, eps_details = None, None, {}
+        eps, eps_xzu, eps_kl_loss, eps_details = None, None, None, {}
         if self.encoder_params.eps_encoder:
-            z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs = self.encoder(obs)
+            z, z_probs, x, u, st, r, eps, eps_xzu, eps_xzu_probs, eps_probs = self.encoder(obs)
             eps_kl_loss = self.eps_kl_loss(eps_probs)
             if self.encoder_params.count_transitions:
                 mi_eps = self.mi_eps_loss(eps_xzu_probs, eps_probs)
@@ -1030,10 +1074,13 @@ class InferenceCMI(Inference):
         # z_dists: [[(bs, seq_len - num_hiddens - 1, num_colors)] * num_hiddens] * len(forward_mode)
         next_x_dists, next_z_prior_dists = self.forward_with_feature(x, z, u, eps, mask,
                                                                      forward_mode=forward_mode)
+        # next_x_dists_e, next_z_prior_dists_e = self.forward_with_feature(x, z, u, eps_xzu, mask,
+        #                                                                  forward_mode=("full",))
 
         next_x, next_z_infer_probs = self.get_next_state(x, z_probs)
         if not self.update_num % (eval_freq * inference_gradient_steps):
             next_x_dists = next_x_dists[:2]
+            # next_x_dists_e = next_x_dists_e[:2]
         recon, recon_detail = self.prediction_loss_from_multi_dist(next_x_dists,
                                                                    next_x,
                                                                    keep_var_dim=True,
@@ -1042,6 +1089,14 @@ class InferenceCMI(Inference):
                                                                        next_z_infer_probs,
                                                                        keep_var_dim=True,
                                                                        loss_type="kl")
+        # recon_e, recon_detail_e = self.prediction_loss_from_multi_dist_e(next_x_dists_e,
+        #                                                                  next_x,
+        #                                                                  keep_var_dim=True,
+        #                                                                  loss_type="recon")
+        # recon_h_e, recon_h_detail_e = self.prediction_loss_from_multi_dist_e(next_z_prior_dists_e,
+        #                                                                     next_z_infer_probs,
+        #                                                                     keep_var_dim=True,
+        #                                                                     loss_type="kl")
         # recon, recon_detail = self.prediction_loss_from_multi_dist(next_dists, next_feature, loss_type="recon")
         rew_loss, rew_loss_detail = self.rew_loss_from_feature(st, r)
         # rew_loss, rew_loss_detail = torch.tensor(0.), {"rew_loss": torch.tensor(0.)}
@@ -1058,12 +1113,13 @@ class InferenceCMI(Inference):
 
         # loss = recon + kl + rew_loss
         if eps_kl_loss is not None:
-            # nelbo = recon + recon_h + self.beta * torch.abs(eps_kl_loss - torch.tensor(self.C))
-            # eps_details["eps_kl_loss"] = eps_kl_loss
-            # eps_details["eps_kl_loss_diff"] = torch.abs(eps_kl_loss - torch.tensor(self.C))
-            nelbo = recon + recon_h + self.beta * eps_kl_loss
+            nelbo = recon + recon_h + self.beta * torch.abs(eps_kl_loss - torch.tensor(self.C))
             eps_details["eps_kl_loss"] = eps_kl_loss
-            loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail, **eps_details}
+            eps_details["eps_kl_loss_diff"] = torch.abs(eps_kl_loss - torch.tensor(self.C))
+            # nelbo = recon + recon_h + self.beta * eps_kl_loss
+            eps_details["eps_kl_loss"] = eps_kl_loss
+            loss_detail = {**recon_detail, **recon_h_detail,
+                           **rew_loss_detail, **eps_details}
         else:
             nelbo = recon + recon_h
             loss_detail = {**recon_detail, **recon_h_detail, **rew_loss_detail}
@@ -1251,10 +1307,10 @@ class InferenceCMI(Inference):
         next_z_prior_masked_ = []
         masked_recon_ = []
         masked_recon_h_ = []
-        eps = None
+        eps, eps_xzu = None, None
         with (torch.no_grad()):
             if self.encoder_params.eps_encoder:
-                z, z_probs, x, u, st, r, eps, eps_xzu_probs, eps_probs = self.encoder(obs)
+                z, z_probs, x, u, st, r, eps, eps_xzu, eps_xzu_probs, eps_probs = self.encoder(obs)
 
                 # t=1 to T-2
                 # [(bs, seq_len - 2, eps_dim)] * num_objects
