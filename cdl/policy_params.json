@@ -1,7 +1,7 @@
 {
     "info": "noisy_all_1stepfuture_1steppast_dvae_noise_encoder_fixed_init",
-    "obs_keys_f": ["obj0", "obj1", "obj2"],
-    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
+    "obs_keys_f": ["obj0", "obj1", "obj2", "obj3", "obj4"],
+    "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2", "target_obj3", "target_obj4"],
     "seed": 1,
     "cuda_id": 0,
     "env_params": {
@@ -37,7 +37,7 @@
         "chemical_env_params": {
             "hidden_objects_ind": [1],
             "hidden_targets_ind": [],
-            "num_objects": 3,
+            "num_objects": 5,
             "num_colors": 4,
             "continuous_pos": true,
             "width_std": 1,
@@ -51,13 +51,13 @@
             "use_cuda": false,
             "max_steps": 7,
             "num_target_interventions": 3,
-            "g": "chain3",
+            "g": "chain5",
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": true,
             "eps_mask_ind": [0, 1, 2],
-            "eps_p": [0.5, 0.0, 0.5]
+            "eps_p": [0.1, 0.8, 0.1]
         }
     },
     "training_params": {
@@ -146,12 +146,12 @@
         "log_std_max": 0,
         "grad_clip_norm": 20000,
         "w_rew_loss": 50,
-        "beta_0": 1,
-        "beta_ss": 1.0,
+        "beta_0": 0.5,
+        "beta_ss": 0.0,
         "beta_anneal_steps": 100,
-        "beta_anneal_rate": 0.0001,
+        "beta_anneal_rate": 0.001,
         "C_0": 0.0,
-        "C_ss": 5.0,
+        "C_ss": 0.0,
         "C_anneal_steps": 100,
         "C_anneal_rate": 0.0001,
         "cmi_params": {
