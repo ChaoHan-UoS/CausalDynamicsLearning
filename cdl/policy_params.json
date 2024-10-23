@@ -35,7 +35,7 @@
             "dense_reward": true
         },
         "chemical_env_params": {
-            "hidden_objects_ind": [1],
+            "hidden_objects_ind": [2],
             "hidden_targets_ind": [],
             "num_objects": 5,
             "num_colors": 4,
@@ -56,7 +56,7 @@
             "dense_reward": true,
             "reward_type": "match",
             "multi_eps": true,
-            "eps_mask_ind": [0, 1, 2],
+            "eps_mask_ind": [0, 1, 2, 3, 4],
             "eps_p": [0.1, 0.8, 0.1]
         }
     },
