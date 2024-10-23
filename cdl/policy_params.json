@@ -51,7 +51,7 @@
             "use_cuda": false,
             "max_steps": 7,
             "num_target_interventions": 3,
-            "g": "chain5",
+            "g": "full5",
             "match_type": "all",
             "dense_reward": true,
             "reward_type": "match",
