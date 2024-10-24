@@ -221,7 +221,7 @@ def train(params):
     os.makedirs(plot_dir, exist_ok=True)
 
     start_step = 0
-    total_steps = 30000
+    total_steps = 40000
     collect_env_step = training_params.collect_env_step
     supervised_hidden_decoder = training_params.supervised_hidden_decoder
     train_prop = inference_params.train_prop
@@ -391,7 +391,7 @@ def train(params):
         print(f'reward prediction accuracy: {rew_loss}')
 
 if __name__ == "__main__":
-    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_allfuture_allpast_fixed_init_h_birnn_encoder_2024_10_18_11_57_36"
+    rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o_allfuture_1steppast_dvae_encoder_fixed_init_2024_10_24_04_28_09"
     params_path = os.path.join(rslts_dir, "params.json")
     params = TrainingParams(training_params_fname=params_path, train=False)
     params.rslts_dir = rslts_dir

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 
 
-noisy_s = 'h1'
+noisy_s = 'o'
 if noisy_s == 'h1':
     # List of your 3 log directories (each directory corresponds to a model)
     logdirs = ['/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_h1_history_encoder_2024_09_30_22_43_09/tensorboard',
@@ -22,6 +22,10 @@ elif noisy_s == 'o2':
     logdirs = ['/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_history_encoder_2024_10_01_11_13_51/tensorboard',
                '/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_allfuture_dvae_encoder_2024_10_01_12_27_11/tensorboard',
                '/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o2_allfuture_1steppast_dvae_encoder_2024_10_01_13_41_59/tensorboard']
+elif noisy_s == 'o':
+    logdirs = ['/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o_allpast_history_encoder_fixed_init_2024_10_24_04_09_11/tensorboard',
+               '/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o_allfuture_future_encoder_fixed_init_2024_10_24_04_27_38/tensorboard',
+               '/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o_allfuture_1steppast_dvae_encoder_fixed_init_2024_10_24_04_28_09/tensorboard']
 else:
     raise NotImplementedError
 
@@ -104,15 +108,15 @@ for metric_idx, metric in enumerate(metrics):
             axs[metric_idx].set_ylim([0, 5])
         else:
             axs[metric_idx].set_ylim([0, 4])
-    else:
-        if metric_idx == 0:
-            axs[metric_idx].set_ylim([0, 1e-3])
-        elif metric_idx == 1:
-            axs[metric_idx].set_ylim([0, 5])
-        elif metric_idx == 2:
-            axs[metric_idx].set_ylim([2.5, 5.5])
-        else:
-            axs[metric_idx].set_ylim([0, 4])
+    # else:
+    #     if metric_idx == 0:
+    #         axs[metric_idx].set_ylim([0, 1e-3])
+    #     elif metric_idx == 1:
+    #         axs[metric_idx].set_ylim([0, 5])
+    #     elif metric_idx == 2:
+    #         axs[metric_idx].set_ylim([2.5, 5.5])
+    #     else:
+    #         axs[metric_idx].set_ylim([0, 4])
 
     # Customize the plot frame (spines)
     for spine in axs[metric_idx].spines.values():
@@ -130,9 +134,9 @@ for metric_idx, metric in enumerate(metrics):
     if metric_idx == 0:
         axs[metric_idx].legend()
 
-# Add a title in the middle above all subplots
-title = fr'Noisy ${noisy_s[0]}^{noisy_s[1]}$'
-fig.suptitle(title)
+# # Add a title in the middle above all subplots
+# title = fr'Noisy ${noisy_s[0]}^{noisy_s[1]}$'
+# fig.suptitle(title)
 
 # Adjust layout to make sure everything fits
 # plt.tight_layout(rect=(0, 0, 1, 0.95), pad=5)
