@@ -140,7 +140,7 @@ def train(params):
             sample_avail=True,
         )
 
-    # init saving
+    # init savings
     writer = SummaryWriter(os.path.join(params.rslts_dir, "tensorboard"))
     model_dir = os.path.join(params.rslts_dir, "trained_models")
     os.makedirs(model_dir, exist_ok=True)
