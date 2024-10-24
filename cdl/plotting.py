@@ -17,7 +17,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 device = torch.device("cpu")
-rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_h1_allfuture_1steppast_dvae_encoder_2024_10_01_01_27_26"
+rslts_dir = "/home/chao/PycharmProjects/CausalDynamicsLearning-DVAE/rslts/dynamics/noisy_o_1stepfuture_1steppast_dvae_encoder_fixed_init_2024_10_23_13_08_09"
 
 params_path = os.path.join(rslts_dir, "params.json")
 params = TrainingParams(training_params_fname=params_path, train=False)
@@ -26,9 +26,8 @@ model_dir = os.path.join(rslts_dir, "trained_models")
 inference_paths = glob.glob(os.path.join(model_dir, 'inference_*'))
 inference_paths.sort(key=lambda f: int(f.split('_')[-1]))
 # Select every third element starting from the first (index 0)
-# 0, 15K, 30K, 45K
-inference_paths_selected = inference_paths[::3]
-env_steps = ["0", "15K", "30K", "45K"]
+inference_paths_selected = inference_paths[:1] + inference_paths[1::2]
+env_steps = ["0", "20K", "60K", "100K"]
 
 # Show the ground truth graph
 chemical_env_params = params.env_params.chemical_env_params
@@ -44,8 +43,8 @@ print(adjacency_intervention)
 fig, axs = plt.subplots(1, 5, figsize=(15, 5))
 
 vmax = params.inference_params.cmi_params.CMI_threshold
-xticklabels = [r'$o_t^1$', r'$h_t^1$', r'$o_t^2$', r'$a_t$']
-yticklabels = [r'$o_{t+1}^1$', r'$h_{t+1}^1$', r'$o_{t+1}^2$']
+xticklabels = [r'$o_{t}^1$', r'$o_{t}^2$', r'$h_{t}^1$', r'$o_{t}^3$', r'$o_{t}^4$', r'$a_t$']
+yticklabels = [r'$o_{t+1}^1$', r'$o_{t+1}^2$', r'$h_{t+1}^1$', r'$o_{t+1}^3$', r'$o_{t+1}^4$']
 
 # Loop through the inference paths and plot inferred causal graphs
 for i in range(len(inference_paths_selected)):
@@ -54,7 +53,7 @@ for i in range(len(inference_paths_selected)):
 
     # Plot the binary heatmap
     sns.heatmap(mask_CMI, linewidths=1, vmin=0, vmax=vmax, square=True,
-                annot=True, fmt='.3f', cbar=False, ax=axs[i])
+                annot=True, fmt='.2f', cbar=False, ax=axs[i])
     axs[i].set_title(f"{env_steps[i]} env. steps")
     axs[i].set_xticklabels(xticklabels)
     axs[i].set_yticklabels(yticklabels if i == 0 else [], rotation=0)
