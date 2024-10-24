@@ -66,7 +66,7 @@
         "load_inference": "",
         "load_model_based": "",
         "load_replay_buffer": "",
-        "total_steps": 220000,
+        "total_steps": 120000,
         "init_steps": 20000,
         "collect_env_step": true,
         "plot_prob_freq": 1000,
