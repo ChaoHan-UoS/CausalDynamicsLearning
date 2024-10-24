@@ -1,5 +1,5 @@
 {
-    "info": "noisy_o_1stepfuture_1steppast_dvae_encoder_fixed_init",
+    "info": "noisy_o_allfuture_1steppast_dvae_encoder_fixed_init",
     "obs_keys_f": ["obj0", "obj1", "obj2"],
     "goal_keys_f": ["target_obj0", "target_obj1", "target_obj2"],
     "seed": 1,
@@ -86,8 +86,8 @@
     },
     "encoder_params": {
         "use_all_past": false,
-        "use_all_future": false,
-        "num_future": 1,
+        "use_all_future": true,
+        "num_future": 0,
         "num_past": 1,
         "encoder_freq": 0,
         "dim_rnn_g": 128,
